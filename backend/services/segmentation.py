@@ -221,7 +221,7 @@ class SegmentationService:
         """MediaPipe 分割"""
         from mediapipe import Image as MpImage
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = MpImage(image_format=MpImage.ImageFormat.SRGB, data=rgb)
+        mp_image = MpImage(image_format=MpImage.image_format.SRGB, data=rgb)
         result = self._mp_segmenter.segment(mp_image)
         category_mask = result.category_mask.numpy_view()
         person_mask = (category_mask > 0).astype(np.uint8) * 255
@@ -372,7 +372,7 @@ class SegmentationService:
         """MediaPipe 人物分割"""
         from mediapipe import Image as MpImage
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = MpImage(image_format=MpImage.ImageFormat.SRGB, data=rgb)
+        mp_image = MpImage(image_format=MpImage.image_format.SRGB, data=rgb)
 
         try:
             result = self._mp_segmenter.segment(mp_image)
