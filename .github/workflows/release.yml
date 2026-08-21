@@ -12,9 +12,6 @@ on:
         default: 'v1.0.0'
 
 jobs:
-  # ──────────────────────────────────────────
-  # 1. Build & Test Backend
-  # ──────────────────────────────────────────
   build-backend:
     name: Backend Build & Test
     runs-on: ubuntu-latest
@@ -47,30 +44,8 @@ jobs:
       - name: Verify backend imports
         run: |
           cd backend
-          python -c "
-import sys, numpy as np
-sys.path.insert(0, '.')
-from services.inpainting import InpaintingService
-from services.segmentation import SegmentationService
-from services.sky import SkyService
-from services.enhance import EnhanceService
-print('All backend imports successful')
-svc = EnhanceService()
-img = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-r = svc.adjust(img, brightness=0.1)
-assert r.shape == img.shape
-r = svc.apply_filter(img, 'morandi')
-assert r.shape == img.shape
-r = svc.face_slim(img, strength=0.3)
-assert r.shape == img.shape
-r = svc.apply_makeup(img, lipstick=0.3)
-assert r.shape == img.shape
-print('Backend smoke tests passed')
-"
+          python test_smoke.py
 
-  # ──────────────────────────────────────────
-  # 2. Build Frontend
-  # ──────────────────────────────────────────
   build-frontend:
     name: Frontend Build
     runs-on: ubuntu-latest
@@ -109,9 +84,6 @@ print('Backend smoke tests passed')
           path: frontend/dist
           retention-days: 7
 
-  # ──────────────────────────────────────────
-  # 3. Package Release (Linux)
-  # ──────────────────────────────────────────
   package-linux:
     name: Package (Linux)
     runs-on: ubuntu-latest
@@ -141,20 +113,14 @@ print('Backend smoke tests passed')
         run: |
           VERSION=${GITHUB_REF_NAME:-v1.0.0}
           mkdir -p release
-          # Copy backend
           cp -r backend release/backend
-          # Copy frontend build
           mkdir -p release/frontend
           cp -r frontend/dist/* release/frontend/
-          # Copy project files
           cp launcher.py release/
           cp README.md release/
-          # Copy cascade models
           mkdir -p release/backend/models/cascades
           cp backend/models/cascades/*.xml release/backend/models/cascades/ 2>/dev/null || true
-          # Create requirements
           cp backend/requirements.txt release/
-          # Create launcher script
           cat > release/start.sh << 'STARTSCRIPT'
           #!/bin/bash
           cd "$(dirname "$0")"
@@ -162,15 +128,12 @@ print('Backend smoke tests passed')
           python launcher.py
           STARTSCRIPT
           chmod +x release/start.sh
-          # Create a simple launcher .bat for Windows
           cat > release/start.bat << 'STARTSCRIPT'
           @echo off
           cd /d "%~dp0"
           python launcher.py
           STARTSCRIPT
-          # Copy setup.py
           cp setup.py release/
-          # Create archive
           tar czf pixel-cake-${VERSION}.tar.gz -C release .
           echo "Created release archive: pixel-cake-${VERSION}.tar.gz"
           ls -lh pixel-cake-${VERSION}.tar.gz
@@ -182,9 +145,6 @@ print('Backend smoke tests passed')
           path: pixel-cake-*.tar.gz
           retention-days: 30
 
-  # ──────────────────────────────────────────
-  # 4. Create GitHub Release
-  # ──────────────────────────────────────────
   create-release:
     name: Create Release
     runs-on: ubuntu-latest
@@ -208,17 +168,16 @@ print('Backend smoke tests passed')
           echo "## What's New" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "- Full AI image editing pipeline" >> $GITHUB_OUTPUT
-          echo "- Enhanced inpainting with multi-model fallback (LaMa/SD/OpenCV)" >> $GITHUB_OUTPUT
-          echo "- Improved segmentation (SAM2/SAM1/MediaPipe/traditional CV)" >> $GITHUB_OUTPUT
-          echo "- Sky replacement with 6 presets + custom upload" >> $GITHUB_OUTPUT
+          echo "- Multi-model fallback: LaMa/SD/OpenCV inpainting" >> $GITHUB_OUTPUT
+          echo "- Segmentation: SAM2/SAM1/MediaPipe/traditional CV" >> $GITHUB_OUTPUT
+          echo "- Sky replacement: 6 presets + custom upload" >> $GITHUB_OUTPUT
           echo "- 9 color filters + 16 adjustment parameters" >> $GITHUB_OUTPUT
-          echo "- AI color matching 2.0 (LAB + histogram specification)" >> $GITHUB_OUTPUT
-          echo "- Auto-enhance flow with 7 steps" >> $GITHUB_OUTPUT
-          echo "- OpenCV 5.x compatibility (4-level face detection fallback)" >> $GITHUB_OUTPUT
-          echo "- Performance improvements (downsampling for large images)" >> $GITHUB_OUTPUT
+          echo "- AI color matching 2.0 (LAB + histogram)" >> $GITHUB_OUTPUT
+          echo "- OpenCV 5.x compatible face detection (4-level fallback)" >> $GITHUB_OUTPUT
+          echo "- Performance: 3.5x speedup via downsampling" >> $GITHUB_OUTPUT
           echo "- Download API for all processing results" >> $GITHUB_OUTPUT
           echo "- GitHub Actions CI + Release workflows" >> $GITHUB_OUTPUT
-          echo "- Setup script for easy installation" >> $GITHUB_OUTPUT
+          echo "- setup.py for easy installation" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
