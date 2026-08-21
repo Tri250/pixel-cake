@@ -68,7 +68,7 @@ Name: "associate"; Description: "Associate .pixelcake project files"; GroupDescr
 
 [Files]
 ; Main application - PyInstaller bundle
-Source: "..\dist\PixelCake.exe"; DestDir: "{app}"; Flags: ignoreversion createinstallismafter
+Source: "..\dist\PixelCake.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 ; Frontend resources
 Source: "..\frontend\dist\*"; DestDir: "{app}\frontend"; Flags: recursesubdirs createallsubdirs
@@ -102,7 +102,7 @@ Source: "..\installer\uninstall.bat"; DestDir: "{app}"; Flags: ignoreversion
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"
 Name: "{group}\Uninstall {#MyAppName}"; Filename: "{app}\uninstall.bat"; WorkingDir: "{app}"
 Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; WorkingDir: "{app}"; Tasks: desktopicon
-Name: "{group}\Documentation"; Filename: "{app}\README.md"; WorkingDir: "{app}"; Flags: ignoreversion
+Name: "{group}\Documentation"; Filename: "{app}\README.md"; WorkingDir: "{app}"
 
 [Run]
 ; Launch the application after installation (optional, user can uncheck)
