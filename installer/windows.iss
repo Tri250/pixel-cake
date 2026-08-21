@@ -54,11 +54,8 @@ DisableDirPage=no
 AlwaysShowComponentsList=no
 
 [Languages]
-Name: "english"
-Name: "chinesesimplified"
-
-[LanguageOptions]
-; Use default message files (compiler resolves automatically)
+Name: "english"; MessagesFile: "English.isl"
+Name: "chinesesimplified"; MessagesFile: "ChineseSimplified.isl"
 
 [Messages]
 ; Custom messages

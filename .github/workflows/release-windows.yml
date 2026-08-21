@@ -83,46 +83,58 @@ jobs:
         shell: pwsh
         run: |
           $isccPath = $null
-          $paths = @(
-            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-            "C:\Program Files\Inno Setup 6\ISCC.exe"
-          )
-          foreach ($p in $paths) {
-            if (Test-Path $p) { $isccPath = $p; break }
-          }
+          $installDir = "C:\Inno Setup 6"
+          $isccPath = Join-Path $installDir "ISCC.exe"
 
-          if (-not $isccPath) {
-            Write-Host "Installing Inno Setup via winget..."
-            winget install --id JRSoftware.InnoSetup --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
-            Start-Sleep -Seconds 10
-            foreach ($p in $paths) {
-              if (Test-Path $p) { $isccPath = $p; break }
-            }
-          }
-
-          if (-not $isccPath) {
-            Write-Host "Downloading Inno Setup from GitHub..."
+          if (-not (Test-Path $isccPath)) {
+            Write-Host "Downloading Inno Setup 6.4.1 from GitHub..."
             $url = "https://github.com/jrsoftware/issrc/releases/download/is-6.4.1/innosetup-6.4.1.exe"
-            $installer = "innosetup.exe"
-            Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-            Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /DIR=`"C:\Inno Setup 6`"" -Wait
-            $isccPath = "C:\Inno Setup 6\ISCC.exe"
-            if (-not (Test-Path $isccPath)) {
-              foreach ($p in $paths) {
-                if (Test-Path $p) { $isccPath = $p; break }
-              }
+            $installer = "innosetup_install.exe"
+            try {
+              Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
+            } catch {
+              # Try alternate URL
+              $url2 = "https://jrsoftware.org/download.php/is.exe"
+              Invoke-WebRequest -Uri $url2 -OutFile $installer -UseBasicParsing
             }
+            Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$installDir`"" -Wait
             Remove-Item $installer -Force -ErrorAction SilentlyContinue
           }
 
-          if (-not $isccPath -or -not (Test-Path $isccPath)) {
-            Write-Error "Inno Setup could not be installed"
+          if (-not (Test-Path $isccPath)) {
+            # Search common paths
+            $paths = @(
+              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+              "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+              "C:\Program Files\Inno Setup 6\ISCC.exe"
+            )
+            foreach ($p in $paths) {
+              if (Test-Path $p) { $isccPath = $p; $installDir = Split-Path $p; break }
+            }
+          }
+
+          if (-not (Test-Path $isccPath)) {
+            Write-Error "Inno Setup installation failed"
+            exit 1
+          }
+
+          # Verify Languages folder
+          $languagesDir = Join-Path $installDir "Languages"
+          if (-not (Test-Path $languagesDir)) {
+            Write-Host "Languages folder not found at $languagesDir"
+            Write-Host "Listing Inno Setup dir:"
+            Get-ChildItem $installDir -Directory | ForEach-Object { Write-Host "  $_" }
+          }
+
+          $englishIsl = Join-Path $languagesDir "English.isl"
+          if (-not (Test-Path $englishIsl)) {
+            Write-Error "English.isl not found. Inno Setup installation may be incomplete."
             exit 1
           }
 
           Write-Host "Inno Setup ready: $isccPath"
+          Write-Host "Languages: $languagesDir"
           echo "ISCC_PATH=$isccPath" >> $env:GITHUB_OUTPUT
 
       - name: Create icon
@@ -133,55 +145,7 @@ jobs:
         run: |
           python installer\create_icon.py
 
-      - name: Build Windows installer (setup.exe)
-        if: ${{ inputs.build_installer == 'true' }}
-        shell: pwsh
-        run: |
-          $VERSION = "${{ github.event.inputs.version }}"
-          if (-not $VERSION) { $VERSION = "v1.0.0" }
-          Write-Host "Building Windows Installer version: $VERSION"
-
-          # Find ISCC
-          $isccPath = $env:ISCC_PATH
-          if (-not $isccPath -or -not (Test-Path $isccPath)) {
-            $paths = @(
-              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-              "C:\Inno Setup 6\ISCC.exe",
-              "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
-            )
-            foreach ($p in $paths) {
-              if (Test-Path $p) { $isccPath = $p; break }
-            }
-          }
-          if (-not $isccPath) {
-            Write-Error "ISCC not found"
-            exit 1
-          }
-
-          $issPath = "installer\windows.iss"
-          $issContent = Get-Content $issPath -Raw
-          $oldPattern = '#define MyAppVersion "[^"]*"'
-          $newLine = "#define MyAppVersion `"$VERSION`""
-          $issContent = [regex]::Replace($issContent, $oldPattern, $newLine)
-          Set-Content $issPath $issContent -Encoding UTF8 -NoNewline
-
-          & $isccPath $issPath
-          if ($LASTEXITCODE -ne 0) {
-            Write-Error "Inno Setup compilation failed"
-            exit 1
-          }
-
-          $installer = Get-ChildItem "installer_output\*.exe" | Select-Object -First 1
-          if (-not $installer) {
-            Write-Error "No installer EXE found!"
-            exit 1
-          }
-          $installerSize = [math]::Round($installer.Length / 1MB, 1)
-          Write-Host "Installer built: $($installer.Name) ($installerSize MB)"
-
       - name: Build Windows EXE with PyInstaller
-        if: ${{ inputs.build_exe == 'true' }}
         shell: pwsh
         run: |
           Write-Host "Building PyInstaller EXE..."
@@ -203,6 +167,56 @@ jobs:
           }
           $exeSize = [math]::Round((Get-Item "dist\PixelCake.exe").Length / 1MB, 1)
           Write-Host "EXE built: dist\PixelCake.exe ($exeSize MB)"
+
+      - name: Build Windows installer (setup.exe)
+        if: ${{ inputs.build_installer == 'true' }}
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.event.inputs.version }}"
+          if (-not $VERSION) { $VERSION = "v1.0.0" }
+          Write-Host "Building Windows Installer version: $VERSION"
+
+          # Find ISCC
+          $isccPath = $env:ISCC_PATH
+          if (-not $isccPath -or -not (Test-Path $isccPath)) {
+            $isccPath = "C:\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $isccPath)) {
+              $paths = @(
+                "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+                "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+                "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+              )
+              foreach ($p in $paths) {
+                if (Test-Path $p) { $isccPath = $p; break }
+              }
+            }
+          }
+          if (-not (Test-Path $isccPath)) {
+            Write-Error "ISCC not found"
+            exit 1
+          }
+
+          $issPath = "installer\windows.iss"
+          $issContent = Get-Content $issPath -Raw
+          $oldPattern = '#define MyAppVersion "[^"]*"'
+          $newLine = "#define MyAppVersion `"$VERSION`""
+          $issContent = [regex]::Replace($issContent, $oldPattern, $newLine)
+          Set-Content $issPath $issContent -Encoding UTF8 -NoNewline
+
+          Write-Host "Running: $isccPath $issPath"
+          & $isccPath $issPath 2>&1
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup compilation failed with exit code $LASTEXITCODE"
+            exit 1
+          }
+
+          $installer = Get-ChildItem "installer_output\*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No installer EXE found!"
+            exit 1
+          }
+          $installerSize = [math]::Round($installer.Length / 1MB, 1)
+          Write-Host "Installer built: $($installer.Name) ($installerSize MB)"
 
       - name: Package release files
         shell: pwsh
