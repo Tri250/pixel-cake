@@ -1,6 +1,8 @@
 """
 Pixel Cake - PyInstaller 打包配置
 生成单文件 Windows exe
+
+v1.0.0 - 完整资源打包支持
 """
 
 import os
@@ -19,6 +21,11 @@ datas = [
     # 服务模块
     ('backend/services', 'services'),
     ('backend/utils', 'utils'),
+    # 模型文件
+    ('backend/models/cascades', 'backend/models/cascades'),
+    ('backend/models/selfie_segmenter.tflite', 'backend/models'),
+    # 应用图标
+    ('assets/icon.svg', 'assets'),
 ]
 
 # ─── 隐藏导入 ───
@@ -51,7 +58,7 @@ hiddenimports = [
     'numpy',
     'scipy',
     'skimage',
-    # AI 模型
+    # AI 模型 (按需加载，标记为hidden以确保打包)
     'torch',
     'torchvision',
     'transformers',
@@ -62,12 +69,22 @@ hiddenimports = [
     # 系统
     'webbrowser',
     'threading',
+    'signal',
+    'logging',
+    # 后端服务
+    'services',
+    'services.inpainting',
+    'services.segmentation',
+    'services.sky',
+    'services.enhance',
+    'utils',
+    'utils.image_utils',
 ]
 
 # ─── 分析 ───
 a = Analysis(
     ['launcher.py'],
-    pathex=[str(ROOT)],
+    pathex=[str(ROOT), str(ROOT / 'backend')],
     binaries=[],
     datas=datas,
     hiddenimports=hiddenimports,
@@ -80,6 +97,8 @@ a = Analysis(
         'notebook',
         'jupyter',
         'pytest',
+        'debugger',
+        'unittest',
     ],
     win_no_prefer_redirects=False,
     win_private_assemblies=False,
@@ -111,5 +130,5 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
-    icon='assets/icon.ico',  # 应用图标
+    icon=str(ROOT / 'assets' / 'icon.ico') if (ROOT / 'assets' / 'icon.ico').exists() else None,
 )

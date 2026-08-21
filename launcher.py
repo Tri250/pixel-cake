@@ -3,28 +3,78 @@ Pixel Cake - Launcher
 Serves frontend static files + API in one process.
 
 FIXED VERSION - resolves frontend/backend API mismatches
+v1.0.0 - Windows compatibility, security hardening, performance
 """
 
 import os
 import sys
+import re
+import signal
 import webbrowser
 import threading
 import time
+import logging
 from pathlib import Path
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [%(levelname)s] %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S',
+)
+logger = logging.getLogger("pixel-cake")
+
+# Platform detection
+IS_WINDOWS = sys.platform == 'win32'
+IS_FROZEN = getattr(sys, 'frozen', False)
+VERSION = "1.0.0"
+MAX_UPLOAD_SIZE = 50 * 1024 * 1024  # 50MB max upload
+CLEANUP_MAX_AGE_HOURS = 24  # Auto-cleanup old files after 24h
+
+# Sanitize ID pattern: only allow alphanumeric and common separators
+SAFE_ID_RE = re.compile(r'^[a-zA-Z0-9_-]+$')
+
+
+def sanitize_id(image_id: str) -> str:
+    """Sanitize image_id to prevent path traversal attacks."""
+    if not image_id or not SAFE_ID_RE.match(image_id):
+        raise ValueError(f"Invalid image_id format: {image_id}")
+    # Prevent path traversal
+    if '..' in image_id or '/' in image_id or '\\' in image_id:
+        raise ValueError(f"Invalid image_id: path traversal detected")
+    return image_id
 
 
 def get_base_dir():
-    """Get resource base dir (compatible with PyInstaller)"""
-    if getattr(sys, 'frozen', False):
+    """Get resource base dir (compatible with PyInstaller on all platforms)."""
+    if IS_FROZEN:
+        # PyInstaller bundled: use the directory of the executable
+        if IS_WINDOWS:
+            return Path(sys.executable).parent
         return Path(sys._MEIPASS)
     return Path(__file__).parent.resolve()
+
+
+def get_data_dir():
+    """Get user data directory for uploads/outputs (writable location)."""
+    base = get_base_dir()
+    if IS_FROZEN:
+        # For frozen apps, use user's home directory for writable data
+        if IS_WINDOWS:
+            data_dir = Path(os.environ.get('APPDATA', base)) / 'PixelCake'
+        else:
+            data_dir = Path.home() / '.pixel-cake'
+    else:
+        data_dir = base
+    data_dir.mkdir(parents=True, exist_ok=True)
+    return data_dir
 
 
 def main():
     import uvicorn
     from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
-    from fastapi.responses import FileResponse
+    from fastapi.responses import FileResponse, JSONResponse
     from fastapi.staticfiles import StaticFiles
     from pydantic import BaseModel
     from typing import Optional
@@ -36,22 +86,28 @@ def main():
     from PIL import Image
 
     base = get_base_dir()
-    UPLOAD_DIR = base / "uploads"
-    OUTPUT_DIR = base / "outputs"
-    TEMP_DIR = base / "temp"
+    data_dir = get_data_dir()
+    UPLOAD_DIR = data_dir / "uploads"
+    OUTPUT_DIR = data_dir / "outputs"
+    TEMP_DIR = data_dir / "temp"
     FRONTEND_DIR = base / "frontend" / "dist"
     FRONTEND_FALLBACK = base / "frontend_dist"
+    MODELS_DIR = base / "backend" / "models"
+    CASCADES_DIR = MODELS_DIR / "cascades"
 
     for d in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR]:
-        d.mkdir(exist_ok=True)
+        d.mkdir(parents=True, exist_ok=True)
 
-    print(f"Base dir: {base}")
+    logger.info(f"Base dir: {base}")
+    logger.info(f"Data dir: {data_dir}")
+    logger.info(f"Platform: {'Windows' if IS_WINDOWS else 'Unix'}, Frozen: {IS_FROZEN}")
+
     # Resolve frontend dir: prefer frontend/dist (Vite output), fallback to frontend_dist
     if not FRONTEND_DIR.exists() and FRONTEND_FALLBACK.exists():
         FRONTEND_DIR = FRONTEND_FALLBACK
-    print(f"Frontend: {FRONTEND_DIR} (exists: {FRONTEND_DIR.exists()})")
+    logger.info(f"Frontend: {FRONTEND_DIR} (exists: {FRONTEND_DIR.exists()})")
 
-    app = FastAPI(title="Pixel Cake", version="0.1.0")
+    app = FastAPI(title="Pixel Cake", version=VERSION)
     app.add_middleware(
         CORSMiddleware,
         allow_origins=["*"],
@@ -59,6 +115,16 @@ def main():
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add security headers middleware
+    @app.middleware("http")
+    async def security_headers(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["X-XSS-Protection"] = "1; mode=block"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        return response
 
     # Lazy-loaded services
     _services = {}
@@ -79,12 +145,38 @@ def main():
                     from services.enhance import EnhanceService
                     _services[name] = EnhanceService()
             except Exception as e:
-                print(f"[Warning] Failed to load {name}: {e}")
+                logger.warning(f"Failed to load {name}: {e}")
                 _services[name] = None
         return _services.get(name)
 
+    def cleanup_old_files():
+        """Remove files older than CLEANUP_MAX_AGE_HOURS."""
+        try:
+            cutoff = time.time() - (CLEANUP_MAX_AGE_HOURS * 3600)
+            for d in [UPLOAD_DIR, OUTPUT_DIR]:
+                if not d.exists():
+                    continue
+                for f in d.iterdir():
+                    if f.is_file() and f.stat().st_mtime < cutoff:
+                        try:
+                            f.unlink()
+                        except OSError:
+                            pass
+            logger.info("Old file cleanup completed")
+        except Exception as e:
+            logger.error(f"Cleanup error: {e}")
+
+    # Schedule periodic cleanup
+    def periodic_cleanup():
+        while True:
+            time.sleep(3600)  # Every hour
+            cleanup_old_files()
+
+    cleanup_thread = threading.Thread(target=periodic_cleanup, daemon=True)
+    cleanup_thread.start()
+
     def load_image(path: str):
-        """安全加载图像 - 支持中文路径"""
+        """安全加载图像 - 支持中文路径和所有平台"""
         img_array = np.fromfile(path, dtype=np.uint8)
         img = cv2.imdecode(img_array, cv2.IMREAD_COLOR)
         if img is None:
@@ -92,7 +184,7 @@ def main():
         return img
 
     def imwrite_safe(path, image, params=None):
-        """安全写入图像 - 支持中文路径"""
+        """安全写入图像 - 支持中文路径和所有平台"""
         ext = Path(path).suffix.lower()
         if params is None:
             if ext in (".jpg", ".jpeg"):
@@ -105,9 +197,21 @@ def main():
         return success
 
     def imread_safe(path, flags=cv2.IMREAD_COLOR):
-        """安全读取图像 - 支持中文路径"""
+        """安全读取图像 - 支持中文路径和所有平台"""
         img_array = np.fromfile(path, dtype=np.uint8)
         return cv2.imdecode(img_array, flags)
+
+    def resolve_cascade_path(cascade_name: str) -> Optional[Path]:
+        """Resolve cascade file path with multiple fallbacks."""
+        candidates = [
+            CASCADES_DIR / cascade_name,
+            base / "backend" / "models" / "cascades" / cascade_name,
+            Path(cv2.data.haarcascades) / cascade_name if hasattr(cv2, 'data') and hasattr(cv2.data, 'haarcascades') else None,
+        ]
+        for c in candidates:
+            if c and Path(c).exists():
+                return Path(c)
+        return None
 
     # -- Skin detection fallback (for tattoo/stubble removal) --
     def detect_skin_mask(image: np.ndarray) -> np.ndarray:
@@ -157,7 +261,7 @@ def main():
         return mask
 
     def detect_ground_mask(image: np.ndarray) -> np.ndarray:
-        """Detect ground/grass regions"""
+        """Detect ground/grass regions (vectorized for performance)"""
         hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
         h, w = image.shape[:2]
 
@@ -173,10 +277,10 @@ def main():
 
         mask = cv2.bitwise_or(mask_green, mask_brown)
 
-        # Ground is usually in the lower portion
+        # Ground is usually in the lower portion - vectorized weight
         weight = np.zeros((h, w), dtype=np.float32)
-        for i in range(h):
-            weight[i, :] = max(0, (i / h) - 0.3) / 0.7
+        row_weights = np.maximum(0, (np.arange(h) / h) - 0.3) / 0.7
+        weight[:, :] = row_weights[:, np.newaxis]
         mask = (mask.astype(np.float32) * weight).astype(np.uint8)
 
         _, mask = cv2.threshold(mask, 50, 255, cv2.THRESH_BINARY)
@@ -237,17 +341,35 @@ def main():
 
     @app.post("/api/upload")
     async def upload(file: UploadFile = File(...)):
-        image_id = str(uuid.uuid4())[:8]
-        ext = Path(file.filename).suffix or ".jpg"
-        save_path = UPLOAD_DIR / f"{image_id}{ext}"
+        # Check file size
         content = await file.read()
+        if len(content) > MAX_UPLOAD_SIZE:
+            raise HTTPException(413, f"File too large. Max size: {MAX_UPLOAD_SIZE // (1024*1024)}MB")
+        if len(content) == 0:
+            raise HTTPException(400, "Empty file")
+
+        image_id = str(uuid.uuid4())[:8]
+        ext = Path(file.filename or "image.jpg").suffix or ".jpg"
+        # Sanitize extension
+        if ext.lower() not in (".jpg", ".jpeg", ".png", ".bmp", ".tiff", ".webp"):
+            ext = ".jpg"
+        save_path = UPLOAD_DIR / f"{image_id}{ext}"
         save_path.write_bytes(content)
-        img = Image.open(io.BytesIO(content))
-        w, h = img.size
+        try:
+            img = Image.open(io.BytesIO(content))
+            img.verify()  # Verify it's a valid image
+            w, h = img.size
+        except Exception:
+            raise HTTPException(400, "Invalid image file")
+        logger.info(f"Upload: {file.filename} -> {image_id} ({w}x{h})")
         return {"image_id": image_id, "filename": file.filename, "width": w, "height": h}
 
     @app.get("/api/image/{image_id}")
     async def get_image(image_id: str):
+        try:
+            sanitize_id(image_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             matches = list(OUTPUT_DIR.glob(f"{image_id}.*"))
@@ -257,6 +379,10 @@ def main():
 
     @app.post("/api/auto-segment")
     async def auto_segment(image_id: str = Form(...), mode: str = Form("person")):
+        try:
+            sanitize_id(image_id)
+        except ValueError as e:
+            raise HTTPException(400, str(e))
         matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Image not found")
@@ -849,19 +975,50 @@ def main():
     port = 8765
     url = f"http://{host}:{port}"
 
-    print()
-    print("=" * 50)
-    print(f"  Pixel Cake - AI Photo Editor")
-    print(f"  URL: {url}")
-    print("=" * 50)
-    print()
+    logger.info("")
+    logger.info("=" * 50)
+    logger.info("  Pixel Cake - AI Photo Editor v" + VERSION)
+    logger.info(f"  URL: {url}")
+    logger.info("=" * 50)
+    logger.info("")
+
+    # Graceful shutdown support
+    shutdown_event = threading.Event()
+
+    def signal_handler(signum, frame):
+        logger.info(f"Received signal {signum}, shutting down...")
+        shutdown_event.set()
+
+    try:
+        signal.signal(signal.SIGTERM, signal_handler)
+        signal.signal(signal.SIGINT, signal_handler)
+    except (OSError, ValueError):
+        # Windows doesn't support SIGTERM, and signal handling may be limited
+        logger.info("Signal handling limited on this platform (expected on Windows)")
 
     def open_browser_delayed():
         time.sleep(2)
-        webbrowser.open(url)
+        if not shutdown_event.is_set():
+            try:
+                webbrowser.open(url)
+            except Exception as e:
+                logger.warning(f"Cannot open browser: {e}")
 
     threading.Thread(target=open_browser_delayed, daemon=True).start()
-    uvicorn.run(app, host=host, port=port, log_level="info")
+
+    # Run uvicorn with proper lifecycle management
+    try:
+        uvicorn.run(
+            app,
+            host=host,
+            port=port,
+            log_level="info",
+            timeout_graceful_shutdown=30,
+        )
+    except Exception as e:
+        logger.error(f"Server error: {e}")
+    finally:
+        logger.info("Server stopped")
 
 
 if __name__ == "__main__":
