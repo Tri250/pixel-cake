@@ -1,4 +1,4 @@
-name: Release Build (Windows)
+name: Release Build (Windows Installer)
 
 on:
   workflow_dispatch:
@@ -8,9 +8,13 @@ on:
         required: true
         default: 'v1.0.0'
       build_exe:
-        description: 'Build Windows EXE (slow)'
+        description: 'Build Windows EXE with PyInstaller'
         required: true
         default: 'false'
+      build_installer:
+        description: 'Build Windows installer (setup.exe)'
+        required: true
+        default: 'true'
 
 permissions:
   contents: write
@@ -21,30 +25,24 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
           node-version: '20'
           cache: 'npm'
           cache-dependency-path: frontend/package-lock.json
-
       - name: Install frontend dependencies
         run: cd frontend && npm ci
-
       - name: TypeScript check
         run: cd frontend && npx tsc --noEmit
-
       - name: Build frontend
         run: cd frontend && npm run build
-
       - name: Verify build output
         run: |
           test -d frontend/dist
           test -f frontend/dist/index.html
           test -d frontend/dist/assets
           echo "Frontend build verified"
-
       - name: Upload frontend artifact
         uses: actions/upload-artifact@v4
         with:
@@ -53,29 +51,26 @@ jobs:
           retention-days: 7
 
   build-windows:
-    name: Windows Build & Package
+    name: Windows Installer Build
     runs-on: windows-latest
     needs: build-frontend
     steps:
       - uses: actions/checkout@v4
-
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-
       - name: Download frontend artifact
         uses: actions/download-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist
-
       - name: Install backend dependencies
         run: |
           cd backend
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-
+          pip install pillow
       - name: Verify backend imports
         env:
           PYTHONIOENCODING: utf-8
@@ -84,55 +79,141 @@ jobs:
           cd backend
           python test_smoke.py
 
-      - name: Package as ZIP
+      - name: Install Inno Setup
+        shell: pwsh
+        run: |
+          winget install --id JRSoftware.InnoSetup --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+          $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $isccPath)) {
+            Write-Error "Inno Setup installation failed"
+            exit 1
+          }
+          Write-Host "Inno Setup installed: $isccPath"
+          echo "ISCC_PATH=$isccPath" >> $env:GITHUB_OUTPUT
+
+      - name: Create icon
+        shell: pwsh
+        env:
+          PYTHONIOENCODING: utf-8
+          PYTHONUTF8: '1'
+        run: |
+          python installer\create_icon.py
+
+      - name: Build Windows installer (setup.exe)
+        if: ${{ inputs.build_installer == 'true' }}
         shell: pwsh
         run: |
           $VERSION = "${{ github.event.inputs.version }}"
           if (-not $VERSION) { $VERSION = "v1.0.0" }
+          Write-Host "Building Windows Installer version: $VERSION"
+          $isccPath = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $isccPath)) {
+            $isccPath = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe"
+          }
+          if (-not (Test-Path $isccPath)) {
+            Write-Error "ISCC not found"
+            exit 1
+          }
+          $issPath = "installer\windows.iss"
+          $issContent = Get-Content $issPath -Raw
+          $oldPattern = '#define MyAppVersion "[^"]*"'
+          $newLine = "#define MyAppVersion `"$VERSION`""
+          $issContent = [regex]::Replace($issContent, $oldPattern, $newLine)
+          Set-Content $issPath $issContent -Encoding UTF8 -NoNewline
+          & $isccPath $issPath
+          if ($LASTEXITCODE -ne 0) {
+            Write-Error "Inno Setup compilation failed"
+            exit 1
+          }
+          $installer = Get-ChildItem "installer_output\*.exe" | Select-Object -First 1
+          if (-not $installer) {
+            Write-Error "No installer EXE found!"
+            exit 1
+          }
+          $installerSize = [math]::Round($installer.Length / 1MB, 1)
+          Write-Host "Installer built: $($installer.Name) ($installerSize MB)"
 
-          $PACKAGE_DIR = "release/pixel-cake-$VERSION-windows"
-          New-Item -ItemType Directory -Force -Path $PACKAGE_DIR
+      - name: Build Windows EXE with PyInstaller
+        if: ${{ inputs.build_exe == 'true' }}
+        shell: pwsh
+        run: |
+          Write-Host "Building PyInstaller EXE..."
+          if (Test-Path "frontend_dist") { Remove-Item -Recurse -Force "frontend_dist" }
+          Copy-Item -Recurse "frontend\dist" "frontend_dist"
+          if (Test-Path "services") { Remove-Item -Recurse -Force "services" }
+          if (Test-Path "utils") { Remove-Item -Recurse -Force "utils" }
+          Copy-Item -Recurse "backend\services" "services"
+          Copy-Item -Recurse "backend\utils" "utils"
+          if (-not (Test-Path "backend\models\cascades")) {
+            New-Item -ItemType Directory -Path "backend\models\cascades" -Force | Out-Null
+          }
+          python setup.py 2>&1 | Out-Null
+          pip install pyinstaller 2>&1 | Out-Null
+          pyinstaller pixel-cake.spec --clean --noconfirm
+          if (-not (Test-Path "dist\PixelCake.exe")) {
+            Write-Error "PixelCake.exe not found!"
+            exit 1
+          }
+          $exeSize = [math]::Round((Get-Item "dist\PixelCake.exe").Length / 1MB, 1)
+          Write-Host "EXE built: dist\PixelCake.exe ($exeSize MB)"
 
-          Copy-Item -Recurse backend "$PACKAGE_DIR/backend"
-          New-Item -ItemType Directory -Force -Path "$PACKAGE_DIR/frontend"
-          Copy-Item -Recurse frontend/dist/* "$PACKAGE_DIR/frontend/"
-          Copy-Item launcher.py "$PACKAGE_DIR/"
-          Copy-Item setup.py "$PACKAGE_DIR/"
-          Copy-Item build.bat "$PACKAGE_DIR/"
-          Copy-Item run.bat "$PACKAGE_DIR/"
-          if (Test-Path README.md) { Copy-Item README.md "$PACKAGE_DIR/" }
-
-          $startBat = "@echo off`nchcp 65001 >nul 2>&1`ncd /d `"%~dp0`"`npython -m pip install -r backend/requirements.txt -q`npython launcher.py`npause"
-          $startBat | Out-File -FilePath "$PACKAGE_DIR/start.bat" -Encoding ASCII
-
-          $readmeContent = "# Pixel Cake $VERSION - Windows`n`n## Quick Start`n1. Install Python 3.10+ from https://python.org`n2. Double-click start.bat`n`n## System Requirements`n- Windows 10/11 (64-bit)`n- Python 3.10+`n- 4GB+ RAM`n- GPU optional`n`n## Uninstall`npython setup.py uninstall"
-          $readmeContent | Out-File -FilePath "$PACKAGE_DIR/README.md" -Encoding UTF8
-
-          Compress-Archive -Path "$PACKAGE_DIR/*" -DestinationPath "pixel-cake-$VERSION-windows.zip" -Force
-
+      - name: Package release files
+        shell: pwsh
+        run: |
+          $VERSION = "${{ github.event.inputs.version }}"
+          if (-not $VERSION) { $VERSION = "v1.0.0" }
+          $RELEASE_DIR = "release\pixel-cake-$VERSION-windows"
+          New-Item -ItemType Directory -Force -Path $RELEASE_DIR | Out-Null
+          $installer = Get-ChildItem "installer_output\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          if ($installer) {
+            Copy-Item $installer.FullName "$RELEASE_DIR\"
+            Write-Host "  Added installer: $($installer.Name)"
+          }
+          if (Test-Path "dist\PixelCake.exe") {
+            Copy-Item "dist\PixelCake.exe" "$RELEASE_DIR\"
+            Write-Host "  Added PixelCake.exe"
+          }
+          Copy-Item -Recurse "backend" "$RELEASE_DIR\backend"
+          New-Item -ItemType Directory -Force -Path "$RELEASE_DIR\frontend" | Out-Null
+          if (Test-Path "frontend\dist") {
+            Copy-Item -Recurse "frontend\dist\*" "$RELEASE_DIR\frontend\"
+          }
+          Copy-Item "launcher.py" "$RELEASE_DIR\"
+          Copy-Item "setup.py" "$RELEASE_DIR\"
+          Copy-Item "run.bat" "$RELEASE_DIR\"
+          Copy-Item "build.bat" "$RELEASE_DIR\"
+          Copy-Item "installer\install.bat" "$RELEASE_DIR\"
+          Copy-Item "installer\uninstall.bat" "$RELEASE_DIR\"
+          $versionInfo = "Pixel Cake $VERSION`nBuilt: $(Get-Date -Format 'yyyy-MM-dd HH:mm:ss')`nPlatform: Windows`n"
+          $versionInfo | Out-File "$RELEASE_DIR\VERSION.txt" -Encoding ASCII
+          (Get-Content "installer\README_template.md" -Raw) -replace 'VERSION', $VERSION | Out-File "$RELEASE_DIR\README.md" -Encoding UTF8
+          Compress-Archive -Path "$RELEASE_DIR\*" -DestinationPath "pixel-cake-$VERSION-windows.zip" -Force
           $zipSize = [math]::Round((Get-Item "pixel-cake-$VERSION-windows.zip").Length / 1MB, 1)
           Write-Host "Created: pixel-cake-$VERSION-windows.zip ($zipSize MB)"
 
-      - name: Upload Windows ZIP artifact
+      - name: Upload Windows artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: windows-zip
-          path: pixel-cake-*-windows.zip
+          name: windows-installer
+          path: |
+            installer_output/*.exe
+            pixel-cake-*-windows.zip
           retention-days: 30
 
-  create-windows-release:
-    name: Create Windows Release
+  create-release:
+    name: Create GitHub Release
     runs-on: ubuntu-latest
     needs: [build-windows]
     steps:
       - uses: actions/checkout@v4
-
-      - name: Download Windows ZIP artifact
+      - name: Download Windows artifacts
         uses: actions/download-artifact@v4
         with:
-          name: windows-zip
+          name: windows-installer
           path: release-assets
-
       - name: Extract version
         id: version
         run: |
@@ -141,58 +222,48 @@ jobs:
             VERSION="v1.0.0"
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
-          echo "## Pixel Cake ${VERSION} - Windows Release" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### System Requirements" >> $GITHUB_OUTPUT
-          echo "- Windows 10/11 (64-bit)" >> $GITHUB_OUTPUT
-          echo "- Python 3.10+" >> $GITHUB_OUTPUT
-          echo "- 4GB+ RAM" >> $GITHUB_OUTPUT
-          echo "- GPU optional (CUDA for acceleration)" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Installation" >> $GITHUB_OUTPUT
-          echo "1. Extract archive" >> $GITHUB_OUTPUT
-          echo "2. Double-click start.bat" >> $GITHUB_OUTPUT
-          echo "3. Browser opens at http://127.0.0.1:8765" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Features" >> $GITHUB_OUTPUT
-          echo "- Full AI image editing pipeline" >> $GITHUB_OUTPUT
-          echo "- Inpainting / Segmentation / Sky Replacement" >> $GITHUB_OUTPUT
-          echo "- 9 color filters + 16 adjustment parameters" >> $GITHUB_OUTPUT
-          echo "- AI relighting, face slimming, makeup" >> $GITHUB_OUTPUT
-          echo "- All processing runs locally" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Uninstall" >> $GITHUB_OUTPUT
-          echo "python setup.py uninstall" >> $GITHUB_OUTPUT
-          echo "EOF" >> $GITHUB_OUTPUT
-
       - name: Clean existing release
         run: |
           VERSION=${{ steps.version.outputs.version }}
-          EXISTING_RELEASE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/$VERSION")
+          EXISTING_RELEASE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/tags/$VERSION")
           if echo "$EXISTING_RELEASE" | grep -q '"id"'; then
             RELEASE_ID=$(echo "$EXISTING_RELEASE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
-            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-              -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
+            curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
           fi
           TAG_REF="refs/tags/$VERSION"
-          curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
-            "https://api.github.com/repos/${{ github.repository }}/git/$TAG_REF" || true
-
-      - name: Create Windows Release
+          curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" -H "Accept: application/vnd.github+json" "https://api.github.com/repos/${{ github.repository }}/git/$TAG_REF" 2>/dev/null || true
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: "Pixel Cake ${{ steps.version.outputs.version }} (Windows)"
+          name: "Pixel Cake ${{ steps.version.outputs.version }} (Windows Installer)"
           tag_name: ${{ steps.version.outputs.version }}
           body: |
-            ${{ steps.version.outputs.RELEASE_NOTES }}
+            ## Pixel Cake ${{ steps.version.outputs.version }} - Windows Release
+
+            ### What's New
+            - Full AI editing pipeline: inpainting, segmentation, sky replacement, enhancement
+            - Security hardened: XSS/Clickjacking protection, input validation
+            - Performance optimized: vectorized operations, lazy model loading
+            - Windows native: proper installer, Start Menu, desktop shortcuts
+            - 9 color filters + 16 adjustment parameters
+            - 6 sky presets (sunset, blue, cloudy, starry, golden_hour, overcast)
+
+            ### Downloads
+            - **PixelCake-Setup-${{ steps.version.outputs.version }}-Windows.exe** - Full installer (recommended)
+            - **pixel-cake-${{ steps.version.outputs.version }}-windows.zip** - Portable version
+
+            ### System Requirements
+            - Windows 10/11 (64-bit)
+            - 4GB+ RAM
+            - GPU optional (CUDA for acceleration)
+
+            ### Privacy
+            - All processing runs 100% locally
+            - No data sent to external servers
           files: |
+            release-assets/*.exe
             release-assets/*.zip
           draft: false
-          prerelease: true
+          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
