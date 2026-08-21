@@ -51,13 +51,13 @@ class SegmentationService:
         if self.model_type == "sam2":
             ok = self._load_sam2()
             if not ok:
-                print("[Segmentation] SAM2 加载失败，回退到 SAM v1")
+                print("[Segmentation] SAM2 failed, falling back to SAM v1")
                 ok = self._load_sam_v1()
                 if not ok:
-                    print("[Segmentation] SAM v1 加载失败，回退到 MediaPipe")
+                    print("[Segmentation] SAM v1 failed, falling back to MediaPipe")
                     ok = self._load_mediapipe()
                     if not ok:
-                        print("[Segmentation] MediaPipe 加载失败，回退到传统CV方法")
+                        print("[Segmentation] MediaPipe failed, falling back to traditional CV")
                         self.model_type = "cv"
                     else:
                         self.model_type = "mediapipe"
@@ -69,7 +69,7 @@ class SegmentationService:
         elif self.model_type == "sam":
             ok = self._load_sam_v1()
             if not ok:
-                print("[Segmentation] SAM v1 加载失败，回退到 MediaPipe")
+                print("[Segmentation] SAM v1 failed, falling back to MediaPipe")
                 ok = self._load_mediapipe()
                 if not ok:
                     self.model_type = "cv"
@@ -84,19 +84,19 @@ class SegmentationService:
     def _load_sam2(self) -> bool:
         """加载 SAM2 模型"""
         if not HAS_TORCH:
-            print("[Segmentation] SAM2 需要 torch")
+            print("[Segmentation] SAM2 requires torch")
             return False
         try:
             from sam2.build_sam import build_sam2
             from sam2.sam2_image_predictor import SAM2ImagePredictor
             self._sam = SAM2ImagePredictor.from_pretrained("facebook/sam2-hiera-large")
-            print("[Segmentation] SAM2 加载完成")
+            print("[Segmentation] SAM2 loaded successfully")
             return True
         except ImportError:
-            print("[Segmentation] sam2 包未安装")
+            print("[Segmentation] sam2 package not installed")
             return False
         except Exception as e:
-            print(f"[Segmentation] SAM2 加载异常: {e}")
+            print(f"[Segmentation] SAM2 load error: {e}")
             return False
 
     def _load_sam_v1(self) -> bool:
@@ -108,19 +108,19 @@ class SegmentationService:
             sam = sam_model_registry["vit_h"](checkpoint="sam_vit_h.pth")
             sam.to(self.device)
             self._sam = SamPredictor(sam)
-            print("[Segmentation] SAM (v1) 加载完成")
+            print("[Segmentation] SAM (v1) loaded successfully")
             return True
         except ImportError:
-            print("[Segmentation] segment_anything 包未安装")
+            print("[Segmentation] segment_anything package not installed")
             return False
         except Exception as e:
-            print(f"[Segmentation] SAM v1 加载异常: {e}")
+            print(f"[Segmentation] SAM v1 load error: {e}")
             return False
 
     def _load_mediapipe(self) -> bool:
         """加载 MediaPipe ImageSegmenter"""
         if not HAS_MEDIAPIPE:
-            print("[Segmentation] MediaPipe 未安装")
+            print("[Segmentation] MediaPipe not installed")
             return False
         try:
             from mediapipe.tasks import python
@@ -138,13 +138,13 @@ class SegmentationService:
                     output_category_mask=True
                 )
                 self._mp_segmenter = vision.ImageSegmenter.create_from_options(options)
-                print("[Segmentation] MediaPipe ImageSegmenter 加载完成")
+                print("[Segmentation] MediaPipe ImageSegmenter loaded successfully")
                 return True
             else:
-                print(f"[Segmentation] MediaPipe 模型文件不存在: {model_path}")
+                print(f"[Segmentation] MediaPipe model file not found: {model_path}")
                 return False
         except Exception as e:
-            print(f"[Segmentation] MediaPipe 加载异常: {e}")
+            print(f"[Segmentation] MediaPipe load error: {e}")
             return False
 
     # ──────────────────────────────────────────
@@ -175,13 +175,13 @@ class SegmentationService:
             try:
                 return self._predict_sam(image, points, box)
             except Exception as e:
-                print(f"[Segmentation] SAM 推理失败: {e}，回退到CV")
+                print(f"[Segmentation] SAM inference failed: {e}, falling back to CV")
                 return self._predict_cv(image, points, box)
         elif self.model_type == "mediapipe" and self._mp_segmenter is not None:
             try:
                 return self._predict_mediapipe(image)
             except Exception as e:
-                print(f"[Segmentation] MediaPipe 推理失败: {e}，回退到CV")
+                print(f"[Segmentation] MediaPipe inference failed: {e}, falling back to CV")
                 return self._predict_cv(image, points, box)
         else:
             return self._predict_cv(image, points, box)
@@ -651,4 +651,4 @@ class SegmentationService:
         self._sam = None
         self._mp_segmenter = None
         self.model_type = "cv"
-        print("[Segmentation] 模型已卸载")
+        print("[Segmentation] model unloaded")

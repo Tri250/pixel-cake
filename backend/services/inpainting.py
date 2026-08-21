@@ -63,7 +63,7 @@ class InpaintingService:
         if self.model_type == "lama":
             ok = self._load_lama()
             if not ok:
-                print("[Inpainting] LaMa 加载失败，回退到 OpenCV Telea")
+                print("[Inpainting] LaMa failed, falling back to OpenCV Telea")
                 self.model_type = "opencv"
                 self._loaded = True
                 return
@@ -71,7 +71,7 @@ class InpaintingService:
         elif self.model_type == "sd":
             ok = self._load_sd()
             if not ok:
-                print("[Inpainting] SD 加载失败，回退到 OpenCV Telea")
+                print("[Inpainting] SD failed, falling back to OpenCV Telea")
                 self.model_type = "opencv"
                 self._loaded = True
                 return
@@ -81,19 +81,19 @@ class InpaintingService:
     def _load_lama(self) -> bool:
         """加载 LaMa 模型（逐级回退）"""
         if not HAS_TORCH:
-            print("[Inpainting] LaMa 需要 torch，当前环境未安装")
+            print("[Inpainting] LaMa requires torch, not installed")
             return False
 
         # 路径1: simple-lama-inpainting 包
         try:
             from simple_lama_inpainting import SimpleLama
             self._model = SimpleLama()
-            print("[Inpainting] LaMa (simple-lama-inpainting) 加载完成")
+            print("[Inpainting] LaMa (simple-lama) loaded successfully")
             return True
         except ImportError:
             pass
         except Exception as e:
-            print(f"[Inpainting] simple-lama-inpainting 异常: {e}")
+            print(f"[Inpainting] simple-lama-inpainting error: {e}")
 
         # 路径2: HuggingFace big-lama via diffusers
         try:
@@ -105,19 +105,19 @@ class InpaintingService:
             ).to(self.device)
             if self.device == "cuda":
                 self._model.enable_model_cpu_offload()
-            print("[Inpainting] LaMa (HuggingFace) 加载完成")
+            print("[Inpainting] LaMa (HuggingFace) loaded successfully")
             return True
         except ImportError:
-            print("[Inpainting] diffusers 包未安装")
+            print("[Inpainting] diffusers package not installed")
             return False
         except Exception as e:
-            print(f"[Inpainting] LaMa (HuggingFace) 加载失败: {e}")
+            print(f"[Inpainting] LaMa (HuggingFace) load failed: {e}")
             return False
 
     def _load_sd(self) -> bool:
         """加载 Stable Diffusion Inpainting"""
         if not HAS_TORCH:
-            print("[Inpainting] SD 需要 torch，当前环境未安装")
+            print("[Inpainting] SD requires torch, not installed")
             return False
         try:
             from diffusers import AutoPipelineForInpainting
@@ -128,13 +128,13 @@ class InpaintingService:
             ).to(self.device)
             if self.device == "cuda":
                 self._model.enable_model_cpu_offload()
-            print("[Inpainting] SD Inpainting 加载完成")
+            print("[Inpainting] SD Inpainting loaded successfully")
             return True
         except ImportError:
-            print("[Inpainting] diffusers 包未安装")
+            print("[Inpainting] diffusers package not installed")
             return False
         except Exception as e:
-            print(f"[Inpainting] SD Inpainting 加载失败: {e}")
+            print(f"[Inpainting] SD Inpainting load failed: {e}")
             return False
 
     def inpaint(
@@ -192,7 +192,7 @@ class InpaintingService:
                 self._cleanup_gpu()
                 return result
             except Exception as e:
-                print(f"[Inpainting] LaMa 推理失败: {e}，回退到 OpenCV")
+                print(f"[Inpainting] LaMa inference failed: {e}, falling back to OpenCV")
                 self._cleanup_gpu()
                 return self._inpaint_opencv(image, mask)
 
@@ -205,7 +205,7 @@ class InpaintingService:
                 self._cleanup_gpu()
                 return result
             except Exception as e:
-                print(f"[Inpainting] SD 推理失败: {e}，回退到 OpenCV")
+                print(f"[Inpainting] SD inference failed: {e}, falling back to OpenCV")
                 self._cleanup_gpu()
                 return self._inpaint_opencv(image, mask)
 
@@ -327,4 +327,4 @@ class InpaintingService:
         self._model = None
         self._loaded = False
         self._cleanup_gpu()
-        print("[Inpainting] 模型已卸载")
+        print("[Inpainting] model unloaded")
