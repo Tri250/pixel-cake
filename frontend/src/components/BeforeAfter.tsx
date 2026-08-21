@@ -43,6 +43,7 @@ export default function BeforeAfter({ original, result }: BeforeAfterProps) {
           alt="修图后"
           className="block max-w-full max-h-[calc(100vh-120px)] object-contain"
           draggable={false}
+          id="ba-result-img"
         />
 
         {/* 修图前（裁剪） */}
@@ -55,9 +56,7 @@ export default function BeforeAfter({ original, result }: BeforeAfterProps) {
             alt="修图前"
             className="block max-h-[calc(100vh-120px)] object-contain"
             style={{
-              width: containerRef.current
-                ? containerRef.current.querySelector('img')?.offsetWidth
-                : 'auto',
+              width: '100%',
             }}
             draggable={false}
           />

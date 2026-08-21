@@ -13,6 +13,7 @@ interface CanvasProps {
   onMaskInpaint: (maskBlob: Blob) => void
   onClearTool: () => void
   onError: (msg: string) => void
+  onCropComplete?: (newImageId: string, newUrl: string) => void
 }
 
 export default function Canvas({
@@ -27,6 +28,7 @@ export default function Canvas({
   onMaskInpaint,
   onClearTool,
   onError,
+  onCropComplete,
 }: CanvasProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -273,8 +275,12 @@ export default function Canvas({
         const res = await fetch('/api/upload', { method: 'POST', body: fd })
         if (res.ok) {
           const data = await res.json()
-          // Update canvas with cropped image
           const url = URL.createObjectURL(blob)
+          // Notify parent of new image
+          if (onCropComplete) {
+            onCropComplete(data.image_id, url)
+          }
+          // Update local canvas
           const img = new Image()
           img.onload = () => {
             if (canvasRef.current) {
@@ -293,9 +299,10 @@ export default function Canvas({
         }
       } catch (err) {
         console.error('Crop failed:', err)
+        onError('裁剪失败: ' + (err as Error).message)
       }
     }, 'image/png')
-  }, [cropRect, image])
+  }, [cropRect, image, onCropComplete, onError])
 
   const cancelCrop = useCallback(() => {
     setCropRect(null)

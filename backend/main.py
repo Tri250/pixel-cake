@@ -214,12 +214,7 @@ class BatchRequest(BaseModel):
 # API 路由
 # ──────────────────────────────────────────────
 
-@app.get("/")
-async def root():
-    return {"name": "Pixel Cake API", "version": "0.1.0", "status": "running"}
-
-
-@app.get("/health")
+@app.get("/api/health")
 async def health():
     """健康检查 & GPU状态"""
     import torch
@@ -239,7 +234,7 @@ async def health():
 
 # ─── 图片上传 ───
 
-@app.post("/upload")
+@app.post("/api/upload")
 async def upload_image(file: UploadFile = File(...)):
     """上传图片，返回 image_id"""
     if not file.content_type.startswith("image/"):
@@ -264,7 +259,7 @@ async def upload_image(file: UploadFile = File(...)):
     }
 
 
-@app.get("/image/{image_id}")
+@app.get("/api/image/{image_id}")
 async def get_image(image_id: str, max_size: int = 2048):
     """获取图片（支持缩放）"""
     matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
@@ -285,7 +280,7 @@ async def get_image(image_id: str, max_size: int = 2048):
 
 # ─── AI 分割 ───
 
-@app.post("/segment")
+@app.post("/api/segment")
 async def segment_object(req: MaskRequest):
     """SAM2 交互式分割"""
     matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -318,7 +313,7 @@ async def segment_object(req: MaskRequest):
     })
 
 
-@app.post("/auto-segment")
+@app.post("/api/auto-segment")
 async def auto_segment(
     image_id: str = Form(...),
     mode: str = Form("person"),  # FIX: now supports person, sky, skin, teeth, ground, all
@@ -372,7 +367,7 @@ async def auto_segment(
 
 # ─── AI 修复（去路人 / 去纹身 / 去胡渣 / 消除穿帮） ───
 
-@app.post("/inpaint")
+@app.post("/api/inpaint")
 async def inpaint(req: InpaintRequest):
     """AI图像修复 - 核心功能"""
     img_matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -429,7 +424,7 @@ async def inpaint(req: InpaintRequest):
 
 # ─── AI 补光 ───
 
-@app.post("/relight")
+@app.post("/api/relight")
 async def relight(
     image_id: str = Form(...),
     brightness: float = Form(0.3),
@@ -456,7 +451,7 @@ async def relight(
 
 # ─── 换天空 ───
 
-@app.post("/sky/replace")
+@app.post("/api/sky/replace")
 async def replace_sky(req: SkyReplaceRequest):
     """AI换天空"""
     matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -479,7 +474,7 @@ async def replace_sky(req: SkyReplaceRequest):
 
 # ─── 图像增强（调色 / 滤镜 / 磨皮） ───
 
-@app.post("/enhance")
+@app.post("/api/enhance")
 async def enhance(req: EnhanceRequest):
     """调色/增强/滤镜/磨皮"""
     matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -526,7 +521,7 @@ async def enhance(req: EnhanceRequest):
 
 # ─── 3D 美型 ───
 
-@app.post("/face-slim")
+@app.post("/api/face-slim")
 async def face_slim(
     image_id: str = Form(...),
     strength: float = Form(0.3),
@@ -552,7 +547,7 @@ async def face_slim(
 
 # ─── 发丝处理 ───
 
-@app.post("/hair-smooth")
+@app.post("/api/hair-smooth")
 async def hair_smooth(
     image_id: str = Form(...),
     strength: float = Form(0.5),
@@ -589,7 +584,7 @@ class MakeupRequest(BaseModel):
     eyeshadow_color: Optional[list] = None
 
 
-@app.post("/makeup")
+@app.post("/api/makeup")
 async def makeup(req: MakeupRequest):
     """妆容调整"""
     matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -625,7 +620,7 @@ async def makeup(req: MakeupRequest):
 
 # ─── AI 追色 2.0 ───
 
-@app.post("/color-match")
+@app.post("/api/color-match")
 async def color_match(
     image_id: str = Form(...),
     reference: UploadFile = File(...),
@@ -674,7 +669,7 @@ class LocalAdjustRequest(BaseModel):
     warmth: float = 0.0
 
 
-@app.post("/local-adjust")
+@app.post("/api/local-adjust")
 async def local_adjust(req: LocalAdjustRequest):
     """基于掩码的局部调色"""
     img_matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
@@ -713,7 +708,7 @@ async def local_adjust(req: LocalAdjustRequest):
 
 # ─── 批量处理 ───
 
-@app.post("/batch")
+@app.post("/api/batch")
 async def batch_process(req: BatchRequest):
     """批量处理多张图片"""
     results = []
@@ -757,7 +752,7 @@ async def batch_process(req: BatchRequest):
 
 # ─── 下载结果 ───
 
-@app.get("/download/{result_id}")
+@app.get("/api/download/{result_id}")
 async def download_result(result_id: str):
     """下载处理结果"""
     matches = list(OUTPUT_DIR.glob(f"{result_id}.*"))

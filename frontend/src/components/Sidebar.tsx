@@ -17,6 +17,7 @@ interface SidebarProps {
   onColorMatch: (refFile: File) => void
   onLocalAdjust: (mode: 'subject' | 'background', adj: { brightness?: number; contrast?: number; saturation?: number; warmth?: number }) => void
   onMakeupCustom: (opts: { lipstick?: number; blush?: number; eyeshadow?: number }) => void
+  onAutoEnhance?: () => void
 }
 
 const tabs: Array<{ id: AdjustMode; label: string; icon: string }> = [
@@ -48,6 +49,7 @@ export default function Sidebar({
   onColorMatch,
   onLocalAdjust,
   onMakeupCustom,
+  onAutoEnhance,
 }: SidebarProps) {
   return (
     <div className="w-72 bg-dark-900 border-l border-dark-700 flex flex-col shrink-0 overflow-hidden">
@@ -110,6 +112,7 @@ export default function Sidebar({
             onFeature={onAIFeature}
             isProcessing={isProcessing}
             hasImage={!!image}
+            onAutoEnhance={onAutoEnhance}
           />
         )}
       </div>
@@ -136,10 +139,10 @@ function BasicPanel({
         onChange={v => onChange({ highlights: v })} />
       <Slider label="阴影" value={params.shadows} min={-1} max={1} step={0.01}
         onChange={v => onChange({ shadows: v })} />
-      <Slider label="白色色阶" value={params.vibrance} min={-1} max={1} step={0.01}
-        onChange={v => onChange({ vibrance: v })} />
-      <Slider label="黑色色阶" value={params.clarity} min={-1} max={1} step={0.01}
-        onChange={v => onChange({ clarity: v })} />
+      <Slider label="白色色阶" value={params.whites} min={-1} max={1} step={0.01}
+        onChange={v => onChange({ whites: v })} />
+      <Slider label="黑色色阶" value={params.blacks} min={-1} max={1} step={0.01}
+        onChange={v => onChange({ blacks: v })} />
     </div>
   )
 }
@@ -406,10 +409,12 @@ function AIPanel({
   onFeature,
   isProcessing,
   hasImage,
+  onAutoEnhance,
 }: {
   onFeature: (f: AIFeature) => void
   isProcessing: boolean
   hasImage: boolean
+  onAutoEnhance?: () => void
 }) {
   const aiFeatures: Array<{
     id: AIFeature
@@ -458,7 +463,11 @@ function AIPanel({
 
       <div className="mt-4 pt-3 border-t border-dark-700">
         <h4 className="text-xs text-dark-400 mb-2 font-medium">⚡ 批量AI</h4>
-        <button className="w-full py-2.5 rounded-lg bg-cake-600/20 hover:bg-cake-600/30 text-sm text-cake-300 transition-colors">
+        <button
+          onClick={() => hasImage && !isProcessing && onAutoEnhance?.()}
+          disabled={!hasImage || isProcessing}
+          className="w-full py-2.5 rounded-lg bg-cake-600/20 hover:bg-cake-600/30 disabled:opacity-40 text-sm text-cake-300 transition-colors"
+        >
           🚀 一键全套修图
         </button>
       </div>

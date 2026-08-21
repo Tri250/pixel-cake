@@ -8,6 +8,14 @@ interface BatchImage {
   resultUrl?: string
 }
 
+const BATCH_ACTIONS = [
+  { id: 'auto_remove', label: '🚶 AI去路人', desc: '自动检测移除', mode: 'person' },
+  { id: 'enhance', label: '🎨 智能调色', desc: '自动优化色彩', mode: null },
+  { id: 'sky_replace', label: '🌅 换天空', desc: '统一天空风格', mode: null },
+  { id: 'skin_smooth', label: '✨ 磨皮', desc: '批量磨皮处理', mode: null },
+  { id: 'relight', label: '💡 AI补光', desc: '智能光照调整', mode: null },
+]
+
 export default function BatchProcess() {
   const [images, setImages] = useState<BatchImage[]>([])
   const [action, setAction] = useState('auto_remove')
@@ -36,8 +44,6 @@ export default function BatchProcess() {
 
   const handleStart = useCallback(async () => {
     setIsRunning(true)
-
-    // 拍一份快照，避免循环中 images 变化
     const snapshot = [...images]
 
     for (let i = 0; i < snapshot.length; i++) {
@@ -55,8 +61,8 @@ export default function BatchProcess() {
         if (!uploadRes.ok) throw new Error(`上传失败: ${uploadRes.status}`)
         const { image_id } = await uploadRes.json()
 
-        // 处理
         let resultBlob: Blob | null = null
+
         if (action === 'auto_remove') {
           const segRes = await fetch('/api/auto-segment', {
             method: 'POST',
@@ -71,6 +77,8 @@ export default function BatchProcess() {
             })
             if (!inpRes.ok) throw new Error('修复失败')
             resultBlob = await inpRes.blob()
+          } else {
+            throw new Error('未检测到人像')
           }
         } else if (action === 'enhance') {
           const res = await fetch('/api/enhance', {
@@ -81,6 +89,7 @@ export default function BatchProcess() {
               brightness: 0.05,
               contrast: 0.1,
               saturation: 0.05,
+              warmth: 0.02,
             }),
           })
           if (!res.ok) throw new Error('调色失败')
@@ -92,6 +101,21 @@ export default function BatchProcess() {
             body: JSON.stringify({ image_id, sky_type: 'sunset' }),
           })
           if (!res.ok) throw new Error('换天失败')
+          resultBlob = await res.blob()
+        } else if (action === 'skin_smooth') {
+          const res = await fetch('/api/enhance', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image_id, skin_smooth: true }),
+          })
+          if (!res.ok) throw new Error('磨皮失败')
+          resultBlob = await res.blob()
+        } else if (action === 'relight') {
+          const res = await fetch('/api/relight', {
+            method: 'POST',
+            body: new URLSearchParams({ image_id, brightness: '0.3', warmth: '0.1' }),
+          })
+          if (!res.ok) throw new Error('补光失败')
           resultBlob = await res.blob()
         }
 
@@ -110,7 +134,6 @@ export default function BatchProcess() {
     setIsRunning(false)
   }, [images, action])
 
-  // 全部下载
   const handleDownloadAll = useCallback(async () => {
     const doneImages = images.filter(i => i.status === 'done' && i.resultUrl)
     for (let i = 0; i < doneImages.length; i++) {
@@ -127,7 +150,6 @@ export default function BatchProcess() {
         a.click()
         document.body.removeChild(a)
         URL.revokeObjectURL(url)
-        // 间隔一下避免浏览器拦截
         if (i < doneImages.length - 1) {
           await new Promise(r => setTimeout(r, 300))
         }
@@ -135,6 +157,14 @@ export default function BatchProcess() {
         console.error(`下载 ${img.file.name} 失败:`, err)
       }
     }
+  }, [images])
+
+  const handleClear = useCallback(() => {
+    images.forEach(img => {
+      img.preview && URL.revokeObjectURL(img.preview)
+      img.resultUrl && URL.revokeObjectURL(img.resultUrl)
+    })
+    setImages([])
   }, [images])
 
   const doneCount = images.filter(i => i.status === 'done').length
@@ -168,20 +198,16 @@ export default function BatchProcess() {
           >
             选择文件
           </button>
-          <p className="text-xs text-dark-500 mt-2">支持 JPG、PNG、RAW 格式</p>
+          <p className="text-xs text-dark-500 mt-2">支持 JPG、PNG 格式</p>
         </div>
 
         {/* 操作选择 */}
-        <div className="flex gap-3 mb-6">
-          {[
-            { id: 'auto_remove', label: '🚶 AI去路人', desc: '自动检测移除' },
-            { id: 'enhance', label: '🎨 智能调色', desc: '自动优化色彩' },
-            { id: 'sky_replace', label: '🌅 换天空', desc: '统一天空风格' },
-          ].map(a => (
+        <div className="flex gap-3 mb-6 flex-wrap">
+          {BATCH_ACTIONS.map(a => (
             <button
               key={a.id}
               onClick={() => setAction(a.id)}
-              className={`flex-1 p-3 rounded-lg text-left transition-all ${
+              className={`flex-1 min-w-[140px] p-3 rounded-lg text-left transition-all ${
                 action === a.id
                   ? 'bg-cake-600/20 ring-1 ring-cake-500'
                   : 'bg-dark-800 hover:bg-dark-700'
@@ -207,7 +233,6 @@ export default function BatchProcess() {
                     alt={img.file.name}
                     className="w-full h-full object-cover"
                     onError={e => {
-                      // resultUrl 无效时回退到预览图
                       if (img.resultUrl && e.currentTarget.src !== img.preview) {
                         e.currentTarget.src = img.preview
                       }
@@ -242,7 +267,11 @@ export default function BatchProcess() {
                   </div>
                   {/* 删除按钮 */}
                   <button
-                    onClick={() => setImages(prev => prev.filter((_, i) => i !== idx))}
+                    onClick={() => {
+                      if (img.preview) URL.revokeObjectURL(img.preview)
+                      if (img.resultUrl) URL.revokeObjectURL(img.resultUrl)
+                      setImages(prev => prev.filter((_, i) => i !== idx))
+                    }}
                     className="absolute top-2 left-2 w-5 h-5 rounded-full bg-dark-950/70 text-dark-300 hover:text-red-400 text-xs hidden group-hover:flex items-center justify-center"
                   >
                     ×
@@ -252,8 +281,8 @@ export default function BatchProcess() {
             </div>
 
             {/* 进度 & 操作 */}
-            <div className="flex items-center gap-4">
-              <div className="flex-1">
+            <div className="flex items-center gap-4 flex-wrap">
+              <div className="flex-1 min-w-[200px]">
                 <div className="h-2 bg-dark-700 rounded-full overflow-hidden">
                   <div
                     className="h-full bg-cake-500 rounded-full transition-all duration-300"
@@ -279,6 +308,13 @@ export default function BatchProcess() {
                   💾 全部下载
                 </button>
               )}
+              <button
+                onClick={handleClear}
+                disabled={isRunning}
+                className="px-4 py-2.5 bg-dark-700 hover:bg-red-900 disabled:opacity-40 rounded-lg text-sm transition-colors"
+              >
+                🗑️ 清空
+              </button>
             </div>
           </>
         )}

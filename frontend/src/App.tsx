@@ -1,52 +1,28 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react'
-import Toolbar from './components/Toolbar'
-import Sidebar from './components/Sidebar'
+import Header from './components/Header'
 import Canvas from './components/Canvas'
+import Sidebar from './components/Sidebar'
 import BeforeAfter from './components/BeforeAfter'
 import BatchProcess from './components/BatchProcess'
-import Header from './components/Header'
+import Toolbar from './components/Toolbar'
+import Histories from './components/Histories'
 
 // ─── 类型定义 ───
 
-export interface ImageInfo {
-  imageId: string
-  filename: string
-  width: number
-  height: number
-  url: string
-}
-
-export interface MaskInfo {
-  maskId: string
-  points: Array<{ x: number; y: number; label: number }>
-}
-
-export type Tool =
-  | 'select'
-  | 'brush'
-  | 'eraser'
-  | 'auto-person'
-  | 'auto-sky'
-  | 'inpaint'
-  | 'crop'
-  | 'hand'
-
-export type AIFeature =
-  | 'remove-person'
-  | 'remove-tattoo'
-  | 'remove-stubble'
-  | 'remove-flaw'
-  | 'relight'
-  | 'fill-grass'
-  | 'sky-replace'
-  | 'skin-smooth'
-  | 'teeth-whiten'
-  | 'color-match'
-  | 'face-slim'
-  | 'hair-smooth'
-  | 'makeup'
-
+export type Tool = 'select' | 'hand' | 'brush' | 'eraser' | 'auto-person' | 'auto-sky' | 'inpaint' | 'crop'
 export type AdjustMode = 'basic' | 'color' | 'detail' | 'filter' | 'ai'
+export type AIFeature =
+  | 'remove-person' | 'remove-tattoo' | 'remove-stubble' | 'remove-flaw'
+  | 'relight' | 'fill-grass' | 'sky-replace' | 'skin-smooth'
+  | 'teeth-whiten' | 'face-slim' | 'hair-smooth' | 'makeup' | 'color-match'
+
+export interface ImageInfo {
+  id: string
+  url: string
+  filename?: string
+  width?: number
+  height?: number
+}
 
 export interface AdjustParams {
   brightness: number
@@ -57,323 +33,492 @@ export interface AdjustParams {
   denoise: number
   highlights: number
   shadows: number
+  whites: number
+  blacks: number
   vibrance: number
   clarity: number
   tint: number
 }
 
-export const defaultParams: AdjustParams = {
-  brightness: 0,
-  contrast: 0,
-  saturation: 0,
-  warmth: 0,
-  sharpness: 0,
-  denoise: 0,
-  highlights: 0,
-  shadows: 0,
-  vibrance: 0,
-  clarity: 0,
-  tint: 0,
+const DEFAULT_PARAMS: AdjustParams = {
+  brightness: 0, contrast: 0, saturation: 0, warmth: 0,
+  sharpness: 0, denoise: 0, highlights: 0, shadows: 0,
+  whites: 0, blacks: 0, vibrance: 0, clarity: 0, tint: 0,
 }
 
+// ─── 历史记录项 ───
+export interface HistoryItem {
+  id: number
+  imageId: string
+  params: AdjustParams
+  filter: string | null
+  filterIntensity: number
+}
+
+// ─── App ───
 export default function App() {
-  // 状态
   const [image, setImage] = useState<ImageInfo | null>(null)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [activeResultId, setActiveResultId] = useState<string | null>(null)
   const [tool, setTool] = useState<Tool>('select')
-  const [adjustMode, setAdjustMode] = useState<AdjustMode>('basic')
-  const [params, setParams] = useState<AdjustParams>(defaultParams)
-  const [brushSize, setBrushSize] = useState(20)
+  const [brushSize, setBrushSize] = useState(30)
+  const [zoom, setZoom] = useState(1)
+  const [mode, setMode] = useState<AdjustMode>('basic')
+  const [params, setParams] = useState<AdjustParams>({ ...DEFAULT_PARAMS })
+  const [selectedFilter, setSelectedFilter] = useState<string | null>(null)
+  const [filterIntensity, setFilterIntensity] = useState(1.0)
   const [isProcessing, setIsProcessing] = useState(false)
   const [showBeforeAfter, setShowBeforeAfter] = useState(false)
   const [showBatch, setShowBatch] = useState(false)
-  const [history, setHistory] = useState<string[]>([])
-  const [historyIndex, setHistoryIndex] = useState(-1)
-  const [zoom, setZoom] = useState(1)
-  const [selectedFilter, setSelectedFilter] = useState<string | null>(null)
-  const [filterIntensity, setFilterIntensity] = useState(1.0)
-  // FIX: Add error message state for user-visible feedback
-  const [errorMsg, setErrorMsg] = useState<string | null>(null)
-  const [toastType, setToastType] = useState<'error' | 'info'>('error')
+  const [toast, setToast] = useState<{ msg: string; type: 'error' | 'info' } | null>(null)
 
-  const showToast = useCallback((msg: string | null, type: 'error' | 'info' = 'info') => {
-    setErrorMsg(msg)
-    setToastType(type)
+  // 历史记录（用于撤销/重做）
+  const historyRef = useRef<HistoryItem[]>([])
+  const historyIndexRef = useRef(-1)
+  const historyIdRef = useRef(0)
+  const [historyVersion, setHistoryVersion] = useState(0) // 触发重渲染
+
+  // 存储当前图像状态的 URL 用于撤销
+  const currentSnapshotRef = useRef<string | null>(null)
+
+  // ─── Toast 通知 ───
+  const showToast = useCallback((msg: string, type: 'error' | 'info' = 'info') => {
+    setToast({ msg, type })
+    setTimeout(() => setToast(null), 3000)
   }, [])
-
-  // Auto-clear error after 5 seconds
-  useEffect(() => {
-    if (errorMsg) {
-      const timer = setTimeout(() => showToast(null, 'error'), 5000)
-      return () => clearTimeout(timer)
-    }
-  }, [errorMsg])
 
   // ─── 上传图片 ───
-
   const handleUpload = useCallback(async (file: File) => {
-    const formData = new FormData()
-    formData.append('file', file)
-
-    const res = await fetch('/api/upload', {
-      method: 'POST',
-      body: formData,
-    })
-    const data = await res.json()
-
-    const imgInfo: ImageInfo = {
-      imageId: data.image_id,
-      filename: data.filename,
-      width: data.width,
-      height: data.height,
-      url: `/api/image/${data.image_id}`,
+    try {
+      setIsProcessing(true)
+      const fd = new FormData()
+      fd.append('file', file)
+      const res = await fetch('/api/upload', { method: 'POST', body: fd })
+      if (!res.ok) throw new Error('上传失败')
+      const data = await res.json()
+      const url = URL.createObjectURL(file)
+      // 释放之前的 URL
+      if (image?.url) URL.revokeObjectURL(image.url)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
+      setImage({
+        id: data.image_id,
+        url,
+        filename: data.filename,
+        width: data.width,
+        height: data.height,
+      })
+      setResultUrl(null)
+      setActiveResultId(null)
+      setParams({ ...DEFAULT_PARAMS })
+      setSelectedFilter(null)
+      historyRef.current = []
+      historyIndexRef.current = -1
+      setHistoryVersion(v => v + 1)
+      showToast('图片上传成功', 'info')
+    } catch (err: any) {
+      showToast('上传失败: ' + err.message, 'error')
+    } finally {
+      setIsProcessing(false)
     }
-    setImage(imgInfo)
-    setResultUrl(null)
-    setHistory([imgInfo.url])
-    setHistoryIndex(0)
-    setParams(defaultParams)
-    setSelectedFilter(null)
-    setFilterIntensity(1.0)
+  }, [image, resultUrl, showToast])
+
+  // ─── 应用历史记录 ───
+  const pushHistory = useCallback((imageId: string, p: AdjustParams, filter: string | null, intensity: number) => {
+    historyIdRef.current += 1
+    const item: HistoryItem = {
+      id: historyIdRef.current,
+      imageId,
+      params: { ...p },
+      filter,
+      filterIntensity: intensity,
+    }
+    // 截断 redo 分支
+    const hist = historyRef.current.slice(0, historyIndexRef.current + 1)
+    hist.push(item)
+    historyRef.current = hist
+    historyIndexRef.current = hist.length - 1
+    setHistoryVersion(v => v + 1)
   }, [])
 
-  // ─── AI 操作 ───
+  // ─── 撤销/重做 ───
+  const handleUndo = useCallback(() => {
+    if (historyIndexRef.current <= 0) return
+    historyIndexRef.current -= 1
+    const item = historyRef.current[historyIndexRef.current]
+    // 重新加载该状态
+    if (image) {
+      // 用历史参数重新处理
+      handleAdjust(item.params, item.filter, item.filterIntensity, true)
+    }
+    setHistoryVersion(v => v + 1)
+  }, [image])
 
+  const handleRedo = useCallback(() => {
+    if (historyIndexRef.current >= historyRef.current.length - 1) return
+    historyIndexRef.current += 1
+    const item = historyRef.current[historyIndexRef.current]
+    if (image) {
+      handleAdjust(item.params, item.filter, item.filterIntensity, true)
+    }
+    setHistoryVersion(v => v + 1)
+  }, [image])
+
+  const canUndo = historyIndexRef.current > 0
+  const canRedo = historyIndexRef.current < historyRef.current.length - 1
+
+  // ─── 跳转到指定历史记录 ───
+  const goToHistory = useCallback((index: number) => {
+    if (index < 0 || index >= historyRef.current.length) return
+    historyIndexRef.current = index
+    const item = historyRef.current[index]
+    if (image) {
+      handleAdjust(item.params, item.filter, item.filterIntensity, true)
+    }
+    setHistoryVersion(v => v + 1)
+  }, [image])
+
+  // ─── 核心：发送调整请求 ───
+  const handleAdjust = useCallback(async (
+    p: AdjustParams,
+    filter: string | null = null,
+    filterIntensityVal: number = 1.0,
+    fromHistory: boolean = false
+  ) => {
+    if (!image) return
+    setIsProcessing(true)
+    try {
+      let endpoint = '/api/enhance'
+      let body: any = {
+        image_id: image.id,
+        brightness: p.brightness,
+        contrast: p.contrast,
+        saturation: p.saturation,
+        warmth: p.warmth,
+        sharpness: p.sharpness,
+        denoise: p.denoise,
+        highlights: p.highlights,
+        shadows: p.shadows,
+        whites: p.whites,
+        blacks: p.blacks,
+        vibrance: p.vibrance,
+        clarity: p.clarity,
+        tint: p.tint,
+      }
+
+      if (filter) {
+        body.filter = filter
+        body.filter_intensity = filterIntensityVal
+      }
+
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+      if (!res.ok) throw new Error(`API 错误: ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+
+      // 释放旧结果
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
+      setResultUrl(url)
+      setActiveResultId(resultId)
+
+      // 非历史回放时推入历史
+      if (!fromHistory) {
+        pushHistory(image.id, p, filter, filterIntensityVal)
+      }
+    } catch (err: any) {
+      showToast('调整失败: ' + err.message, 'error')
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [image, resultUrl, pushHistory, showToast])
+
+  // ─── 参数变更（debounced） ───
+  const lastApplyRef = useRef<number>(0)
+  const debounceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const handleParamsChange = useCallback((partial: Partial<AdjustParams>) => {
+    const newParams = { ...params, ...partial }
+    setParams(newParams)
+
+    if (!image) return
+    // 防抖：300ms 内的变更合并
+    if (debounceTimerRef.current) clearTimeout(debounceTimerRef.current)
+    debounceTimerRef.current = setTimeout(() => {
+      handleAdjust(newParams, selectedFilter, filterIntensity)
+    }, 300)
+  }, [params, image, selectedFilter, filterIntensity, handleAdjust])
+
+  // ─── 滤镜选择 ───
+  const handleFilterSelect = useCallback(async (name: string, intensity?: number) => {
+    const newIntensity = intensity ?? filterIntensity
+    setSelectedFilter(name)
+    setFilterIntensity(newIntensity)
+    if (!image) return
+    setIsProcessing(true)
+    try {
+      const res = await fetch('/api/enhance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_id: image.id,
+          filter: name,
+          filter_intensity: newIntensity,
+          brightness: params.brightness,
+          contrast: params.contrast,
+          saturation: params.saturation,
+          warmth: params.warmth,
+          highlights: params.highlights,
+          shadows: params.shadows,
+          whites: params.whites,
+          blacks: params.blacks,
+          vibrance: params.vibrance,
+          clarity: params.clarity,
+          tint: params.tint,
+        }),
+      })
+      if (!res.ok) throw new Error(`滤镜失败: ${res.status}`)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
+      setResultUrl(url)
+      setActiveResultId(resultId)
+      pushHistory(image.id, params, name, newIntensity)
+    } catch (err: any) {
+      showToast('滤镜失败: ' + err.message, 'error')
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [image, params, resultUrl, filterIntensity, pushHistory, showToast])
+
+  // ─── AI 功能 ───
   const handleAIFeature = useCallback(async (feature: AIFeature) => {
     if (!image) return
     setIsProcessing(true)
-    showToast(null, 'error')
-
     try {
-      let blob: Blob | null = null
+      let endpoint = ''
+      let body: any = {}
 
       switch (feature) {
         case 'remove-person':
-        case 'remove-flaw': {
-          // 自动检测 + inpaint
-          const mode = feature === 'remove-person' ? 'person' : 'all'
-          const segRes = await fetch('/api/auto-segment', {
-            method: 'POST',
-            body: new URLSearchParams({ image_id: image.imageId, mode }),
-          })
-          if (!segRes.ok) throw new Error(`分割失败 (${segRes.status})`)
-          const maskId = segRes.headers.get('X-Mask-Id')
-          if (maskId) {
-            const inpRes = await fetch('/api/inpaint', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_id: image.imageId, mask_id: maskId }),
-            })
-            if (!inpRes.ok) throw new Error(`修复失败 (${inpRes.status})`)
-            blob = await inpRes.blob()
-          }
-          break
-        }
         case 'remove-tattoo':
-        case 'remove-stubble': {
-          // FIX: Use 'skin' mode (now supported by backend)
+        case 'remove-stubble':
+        case 'remove-flaw': {
+          // 先自动分割，再 inpaint
           const segRes = await fetch('/api/auto-segment', {
             method: 'POST',
-            body: new URLSearchParams({ image_id: image.imageId, mode: 'skin' }),
+            body: new URLSearchParams({
+              image_id: image.id,
+              mode: feature === 'remove-person' ? 'person' : 'skin',
+            }),
           })
-          if (!segRes.ok) throw new Error(`皮肤检测失败 (${segRes.status})`)
           const maskId = segRes.headers.get('X-Mask-Id')
-          if (maskId) {
-            const inpRes = await fetch('/api/inpaint', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_id: image.imageId, mask_id: maskId }),
-            })
-            if (!inpRes.ok) throw new Error(`修复失败 (${inpRes.status})`)
-            blob = await inpRes.blob()
+          if (!maskId) throw new Error('分割失败')
+          endpoint = '/api/inpaint'
+          body = {
+            image_id: image.id,
+            mask_id: maskId,
+            fill_type: undefined,
           }
-          break
-        }
-        case 'relight': {
-          const fd = new FormData()
-          fd.append('image_id', image.imageId)
-          fd.append('brightness', '0.3')
-          fd.append('warmth', '0.1')
-          const res = await fetch('/api/relight', { method: 'POST', body: fd })
-          if (!res.ok) throw new Error(`补光失败 (${res.status})`)
-          blob = await res.blob()
           break
         }
         case 'sky-replace': {
-          const res = await fetch('/api/sky/replace', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ image_id: image.imageId, sky_type: 'sunset', blend_strength: 0.7 }),
-          })
-          if (!res.ok) throw new Error(`换天空失败 (${res.status})`)
-          blob = await res.blob()
-          break
-        }
-        case 'fill-grass': {
-          // FIX: Use 'ground' mode (now supported by backend)
-          const segRes = await fetch('/api/auto-segment', {
-            method: 'POST',
-            body: new URLSearchParams({ image_id: image.imageId, mode: 'ground' }),
-          })
-          if (!segRes.ok) throw new Error(`地面检测失败 (${segRes.status})`)
-          const maskId = segRes.headers.get('X-Mask-Id')
-          if (maskId) {
-            const inpRes = await fetch('/api/inpaint', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_id: image.imageId, mask_id: maskId, fill_type: 'grass' }),
-            })
-            if (!inpRes.ok) throw new Error(`补草地失败 (${inpRes.status})`)
-            blob = await inpRes.blob()
-          }
+          endpoint = '/api/sky/replace'
+          body = { image_id: image.id, sky_type: 'sunset', blend_strength: 0.7 }
           break
         }
         case 'skin-smooth': {
-          // FIX: skin_smooth field now accepted by backend
-          const res = await fetch('/api/enhance', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              image_id: image.imageId,
-              brightness: 0,
-              contrast: 0,
-              saturation: 0,
-              warmth: 0,
-              sharpness: 0,
-              denoise: 0.4,
-              skin_smooth: true,
-            }),
-          })
-          if (!res.ok) throw new Error(`磨皮失败 (${res.status})`)
-          blob = await res.blob()
+          endpoint = '/api/enhance'
+          body = { image_id: image.id, skin_smooth: true }
           break
         }
         case 'teeth-whiten': {
-          // FIX: Now properly implemented
           const segRes = await fetch('/api/auto-segment', {
             method: 'POST',
-            body: new URLSearchParams({ image_id: image.imageId, mode: 'teeth' }),
+            body: new URLSearchParams({ image_id: image.id, mode: 'teeth' }),
           })
-          if (!segRes.ok) throw new Error(`牙齿检测失败 (${segRes.status})`)
           const maskId = segRes.headers.get('X-Mask-Id')
-          if (maskId) {
-            const inpRes = await fetch('/api/inpaint', {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ image_id: image.imageId, mask_id: maskId, fill_type: 'whiten' }),
-            })
-            if (!inpRes.ok) throw new Error(`美白失败 (${inpRes.status})`)
-            blob = await inpRes.blob()
-          }
+          if (!maskId) throw new Error('牙齿检测失败')
+          endpoint = '/api/inpaint'
+          body = { image_id: image.id, mask_id: maskId, fill_type: 'whiten' }
+          break
+        }
+        case 'relight': {
+          endpoint = '/api/relight'
+          body = new URLSearchParams({ image_id: image.id, brightness: '0.3', warmth: '0.1' })
+          const res = await fetch(endpoint, { method: 'POST', body })
+          if (!res.ok) throw new Error('补光失败')
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          if (resultUrl) URL.revokeObjectURL(resultUrl)
+          setResultUrl(url)
+          const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+          setActiveResultId(resultId)
+          pushHistory(image.id, params, selectedFilter, filterIntensity)
+          showToast('补光完成', 'info')
+          setIsProcessing(false)
+          return
+        }
+        case 'fill-grass': {
+          const segRes = await fetch('/api/auto-segment', {
+            method: 'POST',
+            body: new URLSearchParams({ image_id: image.id, mode: 'ground' }),
+          })
+          const maskId = segRes.headers.get('X-Mask-Id')
+          if (!maskId) throw new Error('草地检测失败')
+          endpoint = '/api/inpaint'
+          body = { image_id: image.id, mask_id: maskId, fill_type: 'grass' }
           break
         }
         case 'face-slim': {
-          const fd = new FormData()
-          fd.append('image_id', image.imageId)
-          fd.append('strength', '0.3')
-          const res = await fetch('/api/face-slim', { method: 'POST', body: fd })
-          if (!res.ok) throw new Error(`瘦脸失败 (${res.status})`)
-          blob = await res.blob()
-          break
+          endpoint = '/api/face-slim'
+          body = new URLSearchParams({ image_id: image.id, strength: '0.3' })
+          const res = await fetch(endpoint, { method: 'POST', body })
+          if (!res.ok) throw new Error('瘦脸失败')
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          if (resultUrl) URL.revokeObjectURL(resultUrl)
+          setResultUrl(url)
+          const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+          setActiveResultId(resultId)
+          pushHistory(image.id, params, selectedFilter, filterIntensity)
+          showToast('瘦脸完成', 'info')
+          setIsProcessing(false)
+          return
         }
         case 'hair-smooth': {
-          const fd = new FormData()
-          fd.append('image_id', image.imageId)
-          fd.append('strength', '0.5')
-          const res = await fetch('/api/hair-smooth', { method: 'POST', body: fd })
-          if (!res.ok) throw new Error(`发丝处理失败 (${res.status})`)
-          blob = await res.blob()
-          break
+          endpoint = '/api/hair-smooth'
+          body = new URLSearchParams({ image_id: image.id, strength: '0.5' })
+          const res = await fetch(endpoint, { method: 'POST', body })
+          if (!res.ok) throw new Error('发丝处理失败')
+          const blob = await res.blob()
+          const url = URL.createObjectURL(blob)
+          if (resultUrl) URL.revokeObjectURL(resultUrl)
+          setResultUrl(url)
+          const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+          setActiveResultId(resultId)
+          pushHistory(image.id, params, selectedFilter, filterIntensity)
+          showToast('发丝处理完成', 'info')
+          setIsProcessing(false)
+          return
         }
+        case 'color-match':
         case 'makeup': {
-          // Default subtle makeup
-          const res = await fetch('/api/makeup', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              image_id: image.imageId,
-              lipstick: 0.4,
-              blush: 0.3,
-              eyeshadow: 0.2,
-            }),
-          })
-          if (!res.ok) throw new Error(`妆容失败 (${res.status})`)
-          blob = await res.blob()
-          break
+          // 这些通过各自的 Sidebar 面板触发
+          setMode(feature === 'makeup' ? 'detail' : 'filter')
+          showToast(
+            feature === 'makeup' ? '请在细节面板调整妆容参数' : '请在滤镜面板上传参考图追色',
+            'info'
+          )
+          setIsProcessing(false)
+          return
         }
-        case 'color-match': {
-          // Need a reference image — show toast asking user to use the panel
-          showToast('请在右侧「色彩」面板使用 AI 追色功能（导入参考图）', 'info')
-          break
-        }
+        default:
+          throw new Error(`未知功能: ${feature}`)
       }
 
-      if (blob) {
+      if (endpoint && body) {
+        const res = await fetch(endpoint, {
+          method: 'POST',
+          headers: endpoint === '/api/inpaint' || endpoint === '/api/enhance' || endpoint === '/api/sky/replace'
+            ? { 'Content-Type': 'application/json' } : undefined,
+          body: endpoint === '/api/inpaint' || endpoint === '/api/enhance' || endpoint === '/api/sky/replace'
+            ? JSON.stringify(body) : body,
+        })
+        if (!res.ok) throw new Error(`API 错误: ${res.status}`)
+        const blob = await res.blob()
         const url = URL.createObjectURL(blob)
+        if (resultUrl) URL.revokeObjectURL(resultUrl)
         setResultUrl(url)
-        setHistory(prev => [...prev.slice(0, historyIndex + 1), url])
-        setHistoryIndex(prev => prev + 1)
-      } else {
-        // FIX: No result = show error
-        showToast('处理未返回结果，请检查图片是否正确上传', 'error')
+        const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+        setActiveResultId(resultId)
+        pushHistory(image.id, params, selectedFilter, filterIntensity)
+        showToast(`${feature} 处理完成`, 'info')
       }
     } catch (err: any) {
-      console.error('AI处理失败:', err)
-      // FIX: User-visible error message
-      showToast(`AI 处理失败: ${err.message || '未知错误'}`, 'error')
+      showToast('AI 处理失败: ' + err.message, 'error')
     } finally {
       setIsProcessing(false)
     }
-  }, [image, historyIndex])
+  }, [image, resultUrl, params, selectedFilter, filterIntensity, pushHistory, showToast])
 
-  // ─── AI 追色 2.0（参考图） ───
+  // ─── 妆容自定义 ───
+  const handleMakeupCustom = useCallback(async (opts: { lipstick?: number; blush?: number; eyeshadow?: number }) => {
+    if (!image) return
+    setIsProcessing(true)
+    try {
+      const res = await fetch('/api/makeup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_id: image.id,
+          lipstick: opts.lipstick ?? 0,
+          blush: opts.blush ?? 0,
+          eyeshadow: opts.eyeshadow ?? 0,
+        }),
+      })
+      if (!res.ok) throw new Error('妆容处理失败')
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
+      setResultUrl(url)
+      showToast('妆容已应用', 'info')
+    } catch (err: any) {
+      showToast('妆容失败: ' + err.message, 'error')
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [image, resultUrl, showToast])
 
+  // ─── AI 追色 ───
   const handleColorMatch = useCallback(async (refFile: File) => {
     if (!image) return
     setIsProcessing(true)
-    showToast(null, 'error')
     try {
       const fd = new FormData()
-      fd.append('image_id', image.imageId)
+      fd.append('image_id', image.id)
       fd.append('reference', refFile)
       const res = await fetch('/api/color-match', { method: 'POST', body: fd })
-      if (!res.ok) throw new Error(`追色失败 (${res.status})`)
+      if (!res.ok) throw new Error('追色失败')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
       setResultUrl(url)
-      setHistory(prev => [...prev.slice(0, historyIndex + 1), url])
-      setHistoryIndex(prev => prev + 1)
+      showToast('追色完成', 'info')
     } catch (err: any) {
-      console.error('追色失败:', err)
-      showToast(`追色失败: ${err.message}`, 'error')
+      showToast('追色失败: ' + err.message, 'error')
     } finally {
       setIsProcessing(false)
     }
-  }, [image, historyIndex])
+  }, [image, resultUrl, showToast])
 
-  // ─── 局部调色（主体/背景） ───
-
-  const handleLocalAdjust = useCallback(async (mode: 'subject' | 'background', adj: { brightness?: number; contrast?: number; saturation?: number; warmth?: number }) => {
+  // ─── 局部调色 ───
+  const handleLocalAdjust = useCallback(async (
+    localMode: 'subject' | 'background',
+    adj: { brightness?: number; contrast?: number; saturation?: number; warmth?: number }
+  ) => {
     if (!image) return
     setIsProcessing(true)
-    showToast(null, 'error')
     try {
-      // 1. 分割得到 mask
-      const segMode = mode === 'subject' ? 'person' : 'all'
+      // 先自动分割获取 mask
       const segRes = await fetch('/api/auto-segment', {
         method: 'POST',
-        body: new URLSearchParams({ image_id: image.imageId, mode: segMode }),
+        body: new URLSearchParams({
+          image_id: image.id,
+          mode: localMode === 'subject' ? 'person' : 'sky',
+        }),
       })
-      if (!segRes.ok) throw new Error(`分割失败 (${segRes.status})`)
       const maskId = segRes.headers.get('X-Mask-Id')
-      if (!maskId) throw new Error('未获取到掩码')
-
-      // 2. 调用 local-adjust
+      if (!maskId) throw new Error('分割失败')
       const res = await fetch('/api/local-adjust', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          image_id: image.imageId,
+          image_id: image.id,
           mask_id: maskId,
           brightness: adj.brightness ?? 0,
           contrast: adj.contrast ?? 0,
@@ -381,215 +526,229 @@ export default function App() {
           warmth: adj.warmth ?? 0,
         }),
       })
-      if (!res.ok) throw new Error(`局部调色失败 (${res.status})`)
+      if (!res.ok) throw new Error('局部调色失败')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
       setResultUrl(url)
-      setHistory(prev => [...prev.slice(0, historyIndex + 1), url])
-      setHistoryIndex(prev => prev + 1)
+      showToast('局部调色完成', 'info')
     } catch (err: any) {
-      console.error('局部调色失败:', err)
-      showToast(`局部调色失败: ${err.message}`, 'error')
+      showToast('局部调色失败: ' + err.message, 'error')
     } finally {
       setIsProcessing(false)
     }
-  }, [image, historyIndex])
+  }, [image, resultUrl, showToast])
 
-  // ─── 妆容自定义 ───
-
-  const handleMakeupCustom = useCallback(async (opts: { lipstick?: number; blush?: number; eyeshadow?: number }) => {
-    if (!image) return
-    setIsProcessing(true)
-    showToast(null, 'error')
-    try {
-      const res = await fetch('/api/makeup', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_id: image.imageId,
-          lipstick: opts.lipstick ?? 0,
-          blush: opts.blush ?? 0,
-          eyeshadow: opts.eyeshadow ?? 0,
-        }),
-      })
-      if (!res.ok) throw new Error(`妆容失败 (${res.status})`)
-      const blob = await res.blob()
-      const url = URL.createObjectURL(blob)
-      setResultUrl(url)
-      setHistory(prev => [...prev.slice(0, historyIndex + 1), url])
-      setHistoryIndex(prev => prev + 1)
-    } catch (err: any) {
-      console.error('妆容失败:', err)
-      showToast(`妆容失败: ${err.message}`, 'error')
-    } finally {
-      setIsProcessing(false)
-    }
-  }, [image, historyIndex])
-
-  // ─── 调色 ───
-
-  const handleAdjust = useCallback(async (newParams: Partial<AdjustParams>) => {
-    if (!image) return
-    const merged = { ...params, ...newParams }
-    setParams(merged)
-
-    try {
-      // FIX: Send ALL parameters to backend
-      const res = await fetch('/api/enhance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_id: image.imageId,
-          brightness: merged.brightness,
-          contrast: merged.contrast,
-          saturation: merged.saturation,
-          warmth: merged.warmth,
-          sharpness: merged.sharpness,
-          denoise: merged.denoise,
-          highlights: merged.highlights,
-          shadows: merged.shadows,
-          vibrance: merged.vibrance,
-          clarity: merged.clarity,
-          tint: merged.tint,
-        }),
-      })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`调色失败 (${res.status}): ${text}`)
-      }
-      const blob = await res.blob()
-      setResultUrl(URL.createObjectURL(blob))
-    } catch (err: any) {
-      console.error('调色失败:', err)
-      showToast(`调色失败: ${err.message}`, 'error')
-    }
-  }, [image, params])
-
-  // ─── 滤镜 ───
-
-  const handleFilter = useCallback(async (filterName: string, intensity?: number) => {
-    if (!image) return
-    setSelectedFilter(filterName)
-    const effIntensity = intensity ?? filterIntensity
-    if (intensity !== undefined) setFilterIntensity(intensity)
-    setIsProcessing(true)
-    showToast(null, 'error')
-    try {
-      const res = await fetch('/api/enhance', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          image_id: image.imageId,
-          filter: filterName,
-          filter_intensity: effIntensity,
-          brightness: 0,
-          contrast: 0,
-          saturation: 0,
-          warmth: 0,
-          sharpness: 0,
-          denoise: 0,
-        }),
-      })
-      if (res.ok) {
-        const blob = await res.blob()
-        setResultUrl(URL.createObjectURL(blob))
-      } else {
-        const text = await res.text()
-        throw new Error(`滤镜失败 (${res.status}): ${text}`)
-      }
-    } catch (err: any) {
-      console.error('滤镜失败:', err)
-      showToast(`滤镜失败: ${err.message}`, 'error')
-    } finally {
-      setIsProcessing(false)
-    }
-  }, [image, filterIntensity])
-
-  // ─── 撤销/重做 ───
-
-  const undo = useCallback(() => {
-    if (historyIndex > 0) {
-      setHistoryIndex(prev => prev - 1)
-      setResultUrl(history[historyIndex - 1])
-    }
-  }, [historyIndex, history])
-
-  const redo = useCallback(() => {
-    if (historyIndex < history.length - 1) {
-      setHistoryIndex(prev => prev + 1)
-      setResultUrl(history[historyIndex + 1])
-    }
-  }, [historyIndex, history])
-
-  // ─── 画笔提交修复 ───
-
+  // ─── 蒙版画布提交 inpaint ───
   const handleMaskInpaint = useCallback(async (maskBlob: Blob) => {
     if (!image) return
     setIsProcessing(true)
-    showToast(null, 'error')
     try {
       // 上传 mask
-      const maskForm = new FormData()
-      maskForm.append('file', maskBlob, 'mask.png')
-      const maskUploadRes = await fetch('/api/upload', { method: 'POST', body: maskForm })
-      if (!maskUploadRes.ok) throw new Error('Mask 上传失败')
-      const maskData = await maskUploadRes.json()
-      const maskId = maskData.image_id
+      const maskFd = new FormData()
+      maskFd.append('file', maskBlob, 'mask.png')
+      const maskRes = await fetch('/api/upload', { method: 'POST', body: maskFd })
+      if (!maskRes.ok) throw new Error('Mask 上传失败')
+      const maskData = await maskRes.json()
 
-      // 调用 inpaint
       const res = await fetch('/api/inpaint', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ image_id: image.imageId, mask_id: maskId }),
+        body: JSON.stringify({
+          image_id: image.id,
+          mask_id: maskData.image_id,
+        }),
       })
-      if (!res.ok) {
-        const text = await res.text()
-        throw new Error(`修复失败 (${res.status}): ${text}`)
-      }
+      if (!res.ok) throw new Error('修复失败')
       const blob = await res.blob()
       const url = URL.createObjectURL(blob)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
       setResultUrl(url)
-      setHistory(prev => [...prev.slice(0, historyIndex + 1), url])
-      setHistoryIndex(prev => prev + 1)
+      const resultId = res.headers.get('X-Result-Id') || `result_${Date.now()}`
+      setActiveResultId(resultId)
+      showToast('AI 修复完成', 'info')
     } catch (err: any) {
-      console.error('画笔修复失败:', err)
-      showToast(`修复失败: ${err.message}`, 'error')
+      showToast('修复失败: ' + err.message, 'error')
     } finally {
       setIsProcessing(false)
     }
-  }, [image, historyIndex])
+  }, [image, resultUrl, showToast])
 
   // ─── 下载 ───
-
   const handleDownload = useCallback(() => {
-    const url = resultUrl || image?.url
-    if (!url) return
+    if (!activeResultId) {
+      showToast('没有可下载的结果', 'error')
+      return
+    }
     const a = document.createElement('a')
-    a.href = url
-    a.download = image?.filename || 'edited.jpg'
+    a.href = `/api/download/${activeResultId}`
+    a.download = `pixel-cake-${activeResultId}.jpg`
+    document.body.appendChild(a)
     a.click()
-  }, [resultUrl, image])
+    document.body.removeChild(a)
+  }, [activeResultId, showToast])
+
+  // ─── 裁剪完成后更新 App 状态 ───
+  const handleCropComplete = useCallback((newImageId: string, newUrl: string) => {
+    if (image?.url) URL.revokeObjectURL(image.url)
+    setImage(prev => prev ? { ...prev, id: newImageId, url: newUrl } : null)
+    setResultUrl(null)
+    setActiveResultId(null)
+    setParams({ ...DEFAULT_PARAMS })
+    historyRef.current = []
+    historyIndexRef.current = -1
+    setHistoryVersion(v => v + 1)
+    showToast('裁剪完成', 'info')
+  }, [image, showToast])
+
+  // ─── 一键全套修图 ───
+  const handleAutoEnhance = useCallback(async () => {
+    if (!image) return
+    setIsProcessing(true)
+    try {
+      // 按顺序应用：去路人 → 换天空 → 磨皮 → 调色
+      let currentImageId = image.id
+
+      // 1. 自动去路人
+      const seg1 = await fetch('/api/auto-segment', {
+        method: 'POST',
+        body: new URLSearchParams({ image_id: currentImageId, mode: 'person' }),
+      })
+      const mask1Id = seg1.headers.get('X-Mask-Id')
+      if (mask1Id) {
+        const inp1 = await fetch('/api/inpaint', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ image_id: currentImageId, mask_id: mask1Id }),
+        })
+        if (inp1.ok) {
+          const blob1 = await inp1.blob()
+          // 上传结果作为新图
+          const fd1 = new FormData()
+          fd1.append('file', blob1, 'step1.png')
+          const up1 = await fetch('/api/upload', { method: 'POST', body: fd1 })
+          if (up1.ok) currentImageId = (await up1.json()).image_id
+        }
+      }
+
+      // 2. 换天空
+      const skyRes = await fetch('/api/sky/replace', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_id: currentImageId, sky_type: 'sunset' }),
+      })
+      if (skyRes.ok) {
+        const blob2 = await skyRes.blob()
+        const fd2 = new FormData()
+        fd2.append('file', blob2, 'step2.png')
+        const up2 = await fetch('/api/upload', { method: 'POST', body: fd2 })
+        if (up2.ok) currentImageId = (await up2.json()).image_id
+      }
+
+      // 3. 磨皮
+      const skinRes = await fetch('/api/enhance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ image_id: currentImageId, skin_smooth: true }),
+      })
+      if (skinRes.ok) {
+        const blob3 = await skinRes.blob()
+        const fd3 = new FormData()
+        fd3.append('file', blob3, 'step3.png')
+        const up3 = await fetch('/api/upload', { method: 'POST', body: fd3 })
+        if (up3.ok) currentImageId = (await up3.json()).image_id
+      }
+
+      // 4. 自动调色
+      const enhRes = await fetch('/api/enhance', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          image_id: currentImageId,
+          brightness: 0.05, contrast: 0.1, saturation: 0.05,
+        }),
+      })
+      if (enhRes.ok) {
+        const blob = await enhRes.blob()
+        const url = URL.createObjectURL(blob)
+        if (resultUrl) URL.revokeObjectURL(resultUrl)
+        setResultUrl(url)
+        const resultId = enhRes.headers.get('X-Result-Id') || `result_${Date.now()}`
+        setActiveResultId(resultId)
+        // 更新主图为最后一步
+        setImage(prev => prev ? { ...prev, id: currentImageId } : prev)
+        showToast('🚀 一键修图完成', 'info')
+      }
+    } catch (err: any) {
+      showToast('自动修图失败: ' + err.message, 'error')
+    } finally {
+      setIsProcessing(false)
+    }
+  }, [image, resultUrl, showToast])
+
+  // ─── 键盘快捷键 ───
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.ctrlKey || e.metaKey) {
+        if (e.key === 'z') {
+          e.preventDefault()
+          handleUndo()
+        } else if (e.key === 'y' || (e.shiftKey && e.key === 'Z')) {
+          e.preventDefault()
+          handleRedo()
+        }
+      }
+      if (e.key === 'v') setTool('select')
+      else if (e.key === 'h') setTool('hand')
+      else if (e.key === 'b') setTool('brush')
+      else if (e.key === 'e') setTool('eraser')
+      else if (e.key === 'c') setTool('crop')
+      else if (e.key === 'i') setTool('inpaint')
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => window.removeEventListener('keydown', handleKeyDown)
+  }, [handleUndo, handleRedo])
+
+  // ─── 清理：组件卸载时释放 URL ───
+  useEffect(() => {
+    return () => {
+      if (image?.url) URL.revokeObjectURL(image.url)
+      if (resultUrl) URL.revokeObjectURL(resultUrl)
+    }
+  }, [image, resultUrl])
 
   return (
-    <div className="h-screen flex flex-col bg-dark-950 overflow-hidden">
-      {/* 顶栏 */}
+    <div className="h-screen w-screen flex flex-col bg-dark-950 text-dark-100 overflow-hidden">
       <Header
         filename={image?.filename}
         onUpload={handleUpload}
         onDownload={handleDownload}
-        onUndo={undo}
-        onRedo={redo}
-        canUndo={historyIndex > 0}
-        canRedo={historyIndex < history.length - 1}
+        onUndo={handleUndo}
+        onRedo={handleRedo}
+        canUndo={canUndo}
+        canRedo={canRedo}
         showBeforeAfter={showBeforeAfter}
-        onToggleCompare={() => setShowBeforeAfter(!showBeforeAfter)}
+        onToggleCompare={() => setShowBeforeAfter(v => !v)}
         showBatch={showBatch}
-        onToggleBatch={() => setShowBatch(!showBatch)}
+        onToggleBatch={() => setShowBatch(v => !v)}
         zoom={zoom}
         onZoomChange={setZoom}
       />
 
-      <div className="flex-1 flex overflow-hidden">
+      {/* 历史记录条 */}
+      <div className="px-4 py-1 border-b border-dark-800 bg-dark-900/50 flex items-center">
+        <Histories
+          history={historyRef.current}
+          currentIndex={historyIndexRef.current}
+          canUndo={canUndo}
+          canRedo={canRedo}
+          onUndo={handleUndo}
+          onRedo={handleRedo}
+          onSelect={goToHistory}
+        />
+      </div>
+
+      <div className="flex-1 flex overflow-hidden relative">
         {/* 左侧工具栏 */}
         <Toolbar
           tool={tool}
@@ -599,7 +758,7 @@ export default function App() {
         />
 
         {/* 中间画布 */}
-        <div className="flex-1 relative overflow-hidden bg-dark-900">
+        <div className="flex-1 relative overflow-hidden bg-dark-950">
           {showBatch ? (
             <BatchProcess />
           ) : showBeforeAfter && image && resultUrl ? (
@@ -615,86 +774,57 @@ export default function App() {
               isProcessing={isProcessing}
               onAIFeature={handleAIFeature}
               onMaskInpaint={handleMaskInpaint}
-              onClearTool={() => setTool('select')}
+              onClearTool={() => { /* handled by Canvas */ }}
               onError={(msg) => showToast(msg, 'error')}
+              onCropComplete={handleCropComplete}
             />
           )}
 
-          {/* 无图片时的引导 */}
-          {!image && (
-            <div className="absolute inset-0 flex items-center justify-center">
-              <div className="text-center animate-fadeIn">
-                <div className="w-32 h-32 mx-auto mb-6 rounded-3xl bg-dark-800 flex items-center justify-center">
-                  <svg className="w-16 h-16 text-dark-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16l4.586-4.586a2 2 0 012.828 0L16 16m-2-2l1.586-1.586a2 2 0 012.828 0L20 14m-6-6h.01M6 20h12a2 2 0 002-2V6a2 2 0 00-2-2H6a2 2 0 00-2 2v12a2 2 0 002 2z" />
-                  </svg>
-                </div>
-                <h2 className="text-2xl font-semibold text-dark-200 mb-2">
-                  开始你的 AI 修图之旅
-                </h2>
-                <p className="text-dark-400 mb-6">
-                  拖拽图片到此处，或点击上方上传按钮
-                </p>
-                <div className="flex gap-3 justify-center text-sm text-dark-500">
-                  <span className="px-3 py-1 bg-dark-800 rounded-full">AI去路人</span>
-                  <span className="px-3 py-1 bg-dark-800 rounded-full">AI换天空</span>
-                  <span className="px-3 py-1 bg-dark-800 rounded-full">智能调色</span>
-                  <span className="px-3 py-1 bg-dark-800 rounded-full">中性灰磨皮</span>
-                </div>
-              </div>
-            </div>
-          )}
-
-          {/* 处理中遮罩 */}
+          {/* 加载遮罩 */}
           {isProcessing && (
-            <div className="absolute inset-0 bg-dark-950/70 flex items-center justify-center z-50">
-              <div className="text-center">
-                <div className="w-16 h-16 border-4 border-cake-500 border-t-transparent rounded-full animate-spin mx-auto mb-4" />
-                <p className="text-lg text-dark-200">AI 处理中...</p>
-                <p className="text-sm text-dark-400 mt-1">这可能需要几秒钟</p>
+            <div className="absolute inset-0 bg-dark-950/50 backdrop-blur-sm flex items-center justify-center z-50">
+              <div className="flex flex-col items-center gap-3">
+                <div className="w-12 h-12 rounded-full border-4 border-cake-500 border-t-transparent animate-spin" />
+                <p className="text-cake-400 text-sm font-medium">AI 处理中...</p>
               </div>
             </div>
           )}
 
-          {/* Toast 提示浮层 */}
-          {errorMsg && (
-            <div className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 px-6 py-3 rounded-lg shadow-lg flex items-center gap-3 animate-fadeIn ${
-              toastType === 'error'
-                ? 'bg-red-900/90 text-red-100'
-                : 'bg-dark-800/90 text-dark-100 border border-dark-600'
-            }`}>
-              <span className="text-lg">{toastType === 'error' ? '⚠️' : 'ℹ️'}</span>
-              <span className="text-sm">{errorMsg}</span>
-              <button
-                onClick={() => { showToast(null, 'error'); }}
-                className={`ml-2 hover:text-white transition-colors ${
-                  toastType === 'error' ? 'text-red-300' : 'text-dark-400'
-                }`}
-              >
-                ✕
-              </button>
+          {/* Toast 通知 */}
+          {toast && (
+            <div
+              className={`absolute top-4 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-lg text-sm shadow-lg transition-all ${
+                toast.type === 'error'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-cake-600 text-white'
+              }`}
+            >
+              {toast.msg}
             </div>
           )}
         </div>
 
         {/* 右侧面板 */}
-        <Sidebar
-          image={image}
-          mode={adjustMode}
-          onModeChange={setAdjustMode}
-          params={params}
-          onParamsChange={handleAdjust}
-          onAIFeature={handleAIFeature}
-          selectedFilter={selectedFilter}
-          onFilterSelect={handleFilter}
-          filterIntensity={filterIntensity}
-          onFilterIntensityChange={setFilterIntensity}
-          isProcessing={isProcessing}
-          onShowToast={showToast}
-          onColorMatch={handleColorMatch}
-          onLocalAdjust={handleLocalAdjust}
-          onMakeupCustom={handleMakeupCustom}
-        />
+        {!showBatch && (
+          <Sidebar
+            image={image}
+            mode={mode}
+            onModeChange={setMode}
+            params={params}
+            onParamsChange={handleParamsChange}
+            onAIFeature={handleAIFeature}
+            selectedFilter={selectedFilter}
+            onFilterSelect={handleFilterSelect}
+            filterIntensity={filterIntensity}
+            onFilterIntensityChange={setFilterIntensity}
+            isProcessing={isProcessing}
+            onShowToast={showToast}
+            onColorMatch={handleColorMatch}
+            onLocalAdjust={handleLocalAdjust}
+            onMakeupCustom={handleMakeupCustom}
+            onAutoEnhance={handleAutoEnhance}
+          />
+        )}
       </div>
     </div>
   )

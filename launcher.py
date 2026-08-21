@@ -22,7 +22,7 @@ def get_base_dir():
 
 def main():
     import uvicorn
-    from fastapi import FastAPI, File, UploadFile, Form, HTTPException
+    from fastapi import FastAPI, File, UploadFile, Form, HTTPException, Request
     from fastapi.middleware.cors import CORSMiddleware
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
@@ -38,12 +38,17 @@ def main():
     base = get_base_dir()
     UPLOAD_DIR = base / "uploads"
     OUTPUT_DIR = base / "outputs"
-    FRONTEND_DIR = base / "frontend_dist"
+    TEMP_DIR = base / "temp"
+    FRONTEND_DIR = base / "frontend" / "dist"
+    FRONTEND_FALLBACK = base / "frontend_dist"
 
-    for d in [UPLOAD_DIR, OUTPUT_DIR]:
+    for d in [UPLOAD_DIR, OUTPUT_DIR, TEMP_DIR]:
         d.mkdir(exist_ok=True)
 
     print(f"Base dir: {base}")
+    # Resolve frontend dir: prefer frontend/dist (Vite output), fallback to frontend_dist
+    if not FRONTEND_DIR.exists() and FRONTEND_FALLBACK.exists():
+        FRONTEND_DIR = FRONTEND_FALLBACK
     print(f"Frontend: {FRONTEND_DIR} (exists: {FRONTEND_DIR.exists()})")
 
     app = FastAPI(title="Pixel Cake", version="0.1.0")
@@ -218,10 +223,15 @@ def main():
 
     @app.get("/api/health")
     async def health():
-        import torch
+        gpu_available = False
+        try:
+            import torch
+            gpu_available = torch.cuda.is_available()
+        except Exception:
+            pass
         return {
             "status": "ok",
-            "gpu": torch.cuda.is_available(),
+            "gpu": gpu_available,
             "frontend": FRONTEND_DIR.exists(),
         }
 
@@ -292,16 +302,26 @@ def main():
                 upper_blue = np.array([130, 255, 255])
                 combined = cv2.inRange(hsv, lower_blue, upper_blue)
             else:
-                # person/all - use HOG person detection
-                hog = cv2.HOGDescriptor()
-                hog.setSVMDetector(cv2.HOGDescriptor_getDefaultPeopleDetector())
-                rects, _ = hog.detectMultiScale(img, winStride=(4, 4), padding=(8, 8), scale=1.05)
-                combined = np.zeros(img.shape[:2], dtype=np.uint8)
-                for (x, y, w, h) in rects:
-                    x1, y1 = max(0, x - 10), max(0, y - 10)
-                    x2 = min(img.shape[1], x + w + 10)
-                    y2 = min(img.shape[0], y + h + 20)
-                    combined[y1:y2, x1:x2] = 255
+                # person/all - use skin-tone + center-weighted detection
+                hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+                # Skin color range
+                lower_skin = np.array([0, 20, 60])
+                upper_skin = np.array([20, 150, 255])
+                skin_mask = cv2.inRange(hsv, lower_skin, upper_skin)
+                # Also detect face-like regions (center-biased)
+                h, w = img.shape[:2]
+                combined = np.zeros((h, w), dtype=np.uint8)
+                # Add center region as potential person area
+                center_region = np.zeros((h, w), dtype=np.uint8)
+                cx, cy = w // 2, h // 2
+                rw, rh = int(w * 0.3), int(h * 0.4)
+                center_region[max(0, cy-rh):min(h, cy+rh), max(0, cx-rw):min(w, cx+rw)] = 255
+                # Combine skin mask with center region
+                combined = cv2.bitwise_or(skin_mask, center_region)
+                # Clean up
+                kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+                combined = cv2.morphologyEx(combined, cv2.MORPH_CLOSE, kernel)
+                combined = cv2.morphologyEx(combined, cv2.MORPH_OPEN, kernel)
 
         mask_id = str(uuid.uuid4())[:8]
         mask_path = OUTPUT_DIR / f"{mask_id}_mask.png"
@@ -427,39 +447,320 @@ def main():
         rid = str(uuid.uuid4())[:8]
         rpath = OUTPUT_DIR / f"{rid}.jpg"
         imwrite_safe(str(rpath), result)
-        return FileResponse(str(rpath))
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    @app.get("/api/download/{result_id}")
+    async def download(result_id: str):
+        """下载指定 ID 的结果图"""
+        matches = list(OUTPUT_DIR.glob(f"{result_id}.*"))
+        if not matches:
+            # Fallback: try uploads
+            matches = list(UPLOAD_DIR.glob(f"{result_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Result not found")
+        file_path = matches[0]
+        ext = file_path.suffix.lower()
+        media_type = "image/png" if ext == ".png" else "image/jpeg"
+        return FileResponse(
+            str(file_path),
+            media_type=media_type,
+            filename=f"pixel-cake-{result_id}{ext}",
+        )
 
     @app.post("/api/sky/replace")
-    async def sky_replace(req: SkyReplaceRequest):
-        matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
+    async def sky_replace(request: Request):
+        """天空替换 - 支持 JSON body 和 Form-data"""
+        # Try JSON body first, then form
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+            form = await request.form()
+            body = dict(form)
+
+        image_id = body.get("image_id", "")
+        sky_type = body.get("sky_type", "sunset")
+        blend_strength = float(body.get("blend_strength", "0.7"))
+
+        if not image_id:
+            raise HTTPException(400, "image_id is required")
+
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Image not found")
         img = load_image(str(matches[0]))
-        sky = get_service("sky")
-        if sky:
-            result = sky.replace(img, sky_type=req.sky_type, blend=req.blend_strength)
+
+        sky_svc = get_service("sky")
+        if sky_svc:
+            result = sky_svc.replace(img, sky_type=sky_type, blend=blend_strength)
         else:
-            result = img
+            # Fallback: simple color-based sky detection and replacement
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            lower_blue = np.array([90, 30, 80])
+            upper_blue = np.array([130, 255, 255])
+            sky_mask = cv2.inRange(hsv, lower_blue, upper_blue)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, bright_mask = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY)
+            combined_mask = cv2.bitwise_or(sky_mask, bright_mask)
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+            combined_mask = cv2.morphologyEx(combined_mask, cv2.MORPH_CLOSE, kernel)
+            combined_mask = cv2.GaussianBlur(combined_mask, (15, 15), 0)
+            h, w = img.shape[:2]
+            sky_overlay = img.copy()
+            for y in range(h):
+                ratio = y / max(h, 1)
+                if sky_type == "sunset":
+                    sky_overlay[y, :, 0] = int(255 * ratio * 0.5)
+                    sky_overlay[y, :, 1] = int(100 + 80 * (1 - ratio))
+                    sky_overlay[y, :, 2] = int(200 + 55 * (1 - ratio))
+                elif sky_type == "cloudy":
+                    sky_overlay[y, :, 0] = int(180 + 40 * ratio)
+                    sky_overlay[y, :, 1] = int(180 + 40 * ratio)
+                    sky_overlay[y, :, 2] = int(200 + 40 * ratio)
+                elif sky_type == "starry":
+                    sky_overlay[y, :, 0] = int(20 + 30 * ratio)
+                    sky_overlay[y, :, 1] = int(15 + 20 * ratio)
+                    sky_overlay[y, :, 2] = int(10 + 15 * ratio)
+                elif sky_type == "golden_hour":
+                    sky_overlay[y, :, 0] = int(50 + 30 * (1 - ratio))
+                    sky_overlay[y, :, 1] = int(150 + 50 * (1 - ratio))
+                    sky_overlay[y, :, 2] = int(200 + 55 * (1 - ratio))
+                else:  # blue / overcast
+                    sky_overlay[y, :, 0] = int(200 + 55 * (1 - ratio))
+                    sky_overlay[y, :, 1] = int(150 + 80 * (1 - ratio))
+                    sky_overlay[y, :, 2] = int(100 + 100 * (1 - ratio))
+            mask_3ch = cv2.cvtColor(combined_mask, cv2.COLOR_GRAY2BGR).astype(np.float32) / 255.0
+            result = (img.astype(np.float32) * (1 - mask_3ch) + sky_overlay.astype(np.float32) * mask_3ch).clip(0, 255).astype(np.uint8)
+
         rid = str(uuid.uuid4())[:8]
         rpath = OUTPUT_DIR / f"{rid}.jpg"
         imwrite_safe(str(rpath), result)
-        return FileResponse(str(rpath))
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
 
     @app.post("/api/relight")
-    async def relight(image_id: str = Form(...), brightness: float = Form(0.3), warmth: float = Form(0.1)):
+    async def relight(request: Request):
+        """AI 补光 - 支持 JSON body 和 Form-data"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+            form = await request.form()
+            body = dict(form)
+
+        image_id = body.get("image_id", "")
+        brightness = float(body.get("brightness", "0.3"))
+        warmth = float(body.get("warmth", "0.1"))
+        direction = body.get("direction", "natural")
+
+        if not image_id:
+            raise HTTPException(400, "image_id is required")
+
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Image not found")
+        img = load_image(str(matches[0]))
+
+        enh = get_service("enhance")
+        if enh:
+            result = enh.relight(img, brightness=brightness, warmth=warmth, direction=direction)
+        else:
+            # Fallback: basic brightness + warmth via OpenCV
+            result = img.astype(np.float32)
+            result = np.clip(result * (1 + brightness), 0, 255).astype(np.uint8)
+            if warmth != 0:
+                b, g, r = cv2.split(result)
+                r = np.clip(r.astype(np.float32) * (1 + warmth * 0.5), 0, 255).astype(np.uint8)
+                b = np.clip(b.astype(np.float32) * (1 - warmth * 0.5), 0, 255).astype(np.uint8)
+                result = cv2.merge([b, g, r])
+
+        rid = str(uuid.uuid4())[:8]
+        rpath = OUTPUT_DIR / f"{rid}.jpg"
+        imwrite_safe(str(rpath), result)
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    # -- 3D 美型 --
+    @app.post("/api/face-slim")
+    async def face_slim(image_id: str = Form(...), strength: float = Form(0.3)):
         matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Image not found")
         img = load_image(str(matches[0]))
         enh = get_service("enhance")
         if enh:
-            result = enh.relight(img, brightness=brightness, warmth=warmth)
+            result = enh.face_slim(img, strength=strength)
         else:
-            result = np.clip(img.astype(np.float32) + brightness * 150, 0, 255).astype(np.uint8)
+            # Fallback: simple horizontal squeeze using skin-tone face detection
+            h, w = img.shape[:2]
+            hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
+            # 肤色检测
+            mask = cv2.inRange(hsv, (0, 30, 80), (20, 180, 255))
+            mask2 = cv2.inRange(hsv, (170, 30, 80), (180, 180, 255))
+            mask = cv2.bitwise_or(mask, mask2)
+            # 找最大肤色区域
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            if contours:
+                largest = max(contours, key=cv2.contourArea)
+                x, y, fw, fh = cv2.boundingRect(largest)
+                if fw >= 30 and fh >= 40:
+                    cx = x + fw // 2
+                    squeeze = int(fw * strength * 0.15)
+                    result = img.copy()
+                    M = np.float32([[1, 0, -squeeze], [0, 1, 0]])
+                    result[y:y+fh, x:cx] = cv2.warpAffine(
+                        result[y:y+fh, x:cx], M, (cx - x, fh)
+                    )
+                else:
+                    result = img
+            else:
+                result = img
         rid = str(uuid.uuid4())[:8]
         rpath = OUTPUT_DIR / f"{rid}.jpg"
         imwrite_safe(str(rpath), result)
-        return FileResponse(str(rpath))
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    # -- 发丝处理 --
+    @app.post("/api/hair-smooth")
+    async def hair_smooth(image_id: str = Form(...), strength: float = Form(0.5)):
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Image not found")
+        img = load_image(str(matches[0]))
+        enh = get_service("enhance")
+        if enh:
+            result = enh.hair_smooth(img, strength=strength)
+        else:
+            # Fallback: Gaussian blur on edge regions
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            edges = cv2.Canny(gray, 30, 100)
+            h, w = img.shape[:2]
+            kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+            edges_dilated = cv2.dilate(edges, kernel, iterations=2)
+            blur_size = int(strength * 20) * 2 + 3
+            blurred = cv2.GaussianBlur(img, (blur_size, blur_size), 0)
+            mask_3ch = np.stack([edges_dilated.astype(np.float32) / 255.0 * strength] * 3, axis=-1)
+            result = img.astype(np.float32) * (1 - mask_3ch) + blurred.astype(np.float32) * mask_3ch
+            result = result.clip(0, 255).astype(np.uint8)
+        rid = str(uuid.uuid4())[:8]
+        rpath = OUTPUT_DIR / f"{rid}.jpg"
+        imwrite_safe(str(rpath), result)
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    # -- 妆容调整 --
+    class MakeupRequest(BaseModel):
+        image_id: str
+        lipstick: float = 0.0
+        blush: float = 0.0
+        eyeshadow: float = 0.0
+        lip_color: Optional[list] = None
+        blush_color: Optional[list] = None
+        eyeshadow_color: Optional[list] = None
+
+    @app.post("/api/makeup")
+    async def makeup(req: MakeupRequest):
+        matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Image not found")
+        img = load_image(str(matches[0]))
+        enh = get_service("enhance")
+        lip_c = tuple(req.lip_color) if req.lip_color else (0, 0, 200)
+        blush_c = tuple(req.blush_color) if req.blush_color else (100, 100, 230)
+        eye_c = tuple(req.eyeshadow_color) if req.eyeshadow_color else (120, 50, 50)
+        if enh:
+            result = enh.apply_makeup(
+                img,
+                lipstick=req.lipstick,
+                blush=req.blush,
+                eyeshadow=req.eyeshadow,
+                lip_color=lip_c,
+                blush_color=blush_c,
+                eyeshadow_color=eye_c,
+            )
+        else:
+            result = img  # No fallback for makeup
+        rid = str(uuid.uuid4())[:8]
+        rpath = OUTPUT_DIR / f"{rid}.jpg"
+        imwrite_safe(str(rpath), result)
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    # -- AI 追色 2.0 --
+    @app.post("/api/color-match")
+    async def color_match(image_id: str = Form(...), reference: UploadFile = File(...)):
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
+        if not matches:
+            raise HTTPException(404, "Source image not found")
+        img = load_image(str(matches[0]))
+        ref_content = await reference.read()
+        ref_array = np.frombuffer(ref_content, dtype=np.uint8)
+        ref_img = cv2.imdecode(ref_array, cv2.IMREAD_COLOR)
+        if ref_img is None:
+            raise HTTPException(400, "Cannot read reference image")
+        enh = get_service("enhance")
+        if enh:
+            result = enh.color_match_advanced(img, ref_img)
+        else:
+            # Fallback: basic LAB mean/std matching
+            src_lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB).astype(np.float32)
+            ref_lab = cv2.cvtColor(ref_img, cv2.COLOR_BGR2LAB).astype(np.float32)
+            for i in range(3):
+                src_mean, src_std = src_lab[:, :, i].mean(), src_lab[:, :, i].std()
+                ref_mean, ref_std = ref_lab[:, :, i].mean(), ref_lab[:, :, i].std()
+                if src_std > 0:
+                    src_lab[:, :, i] = (src_lab[:, :, i] - src_mean) * (ref_std / src_std) + ref_mean
+            result = cv2.cvtColor(src_lab.clip(0, 255).astype(np.uint8), cv2.COLOR_LAB2BGR)
+        rid = str(uuid.uuid4())[:8]
+        rpath = OUTPUT_DIR / f"{rid}.jpg"
+        imwrite_safe(str(rpath), result)
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
+
+    # -- 局部调色 --
+    class LocalAdjustRequest(BaseModel):
+        image_id: str
+        mask_id: str
+        brightness: float = 0.0
+        contrast: float = 0.0
+        saturation: float = 0.0
+        warmth: float = 0.0
+
+    @app.post("/api/local-adjust")
+    async def local_adjust(req: LocalAdjustRequest):
+        img_matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
+        if not img_matches:
+            raise HTTPException(404, "Image not found")
+        mask_matches = list(OUTPUT_DIR.glob(f"{req.mask_id}_mask.png"))
+        if not mask_matches:
+            mask_matches = list(UPLOAD_DIR.glob(f"{req.mask_id}.*"))
+        if not mask_matches:
+            raise HTTPException(404, "Mask not found")
+        img = load_image(str(img_matches[0]))
+        mask = imread_safe(str(mask_matches[0]), cv2.IMREAD_GRAYSCALE)
+        if mask is None:
+            raise HTTPException(404, "Mask unreadable")
+        enh = get_service("enhance")
+        if enh:
+            result = enh.local_adjust(
+                img, mask,
+                brightness=req.brightness,
+                contrast=req.contrast,
+                saturation=req.saturation,
+                warmth=req.warmth,
+            )
+        else:
+            # Fallback: simple mask blending
+            adjusted = img.astype(np.float32)
+            if req.brightness != 0:
+                adjusted += req.brightness * 100
+            if req.saturation != 0:
+                hsv = cv2.cvtColor(adjusted.clip(0, 255).astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
+                hsv[:, :, 1] *= (1.0 + req.saturation)
+                adjusted = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
+            mask_blur = cv2.GaussianBlur(mask, (21, 21), 0).astype(np.float32) / 255.0
+            mask_3ch = np.stack([mask_blur] * 3, axis=-1)
+            result = img.astype(np.float32) * (1 - mask_3ch) + adjusted * mask_3ch
+            result = result.clip(0, 255).astype(np.uint8)
+        rid = str(uuid.uuid4())[:8]
+        rpath = OUTPUT_DIR / f"{rid}.jpg"
+        imwrite_safe(str(rpath), result)
+        return FileResponse(str(rpath), headers={"X-Result-Id": rid})
 
     # -- Frontend --
     if FRONTEND_DIR.exists() and (FRONTEND_DIR / "index.html").exists():

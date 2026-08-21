@@ -6,3 +6,7 @@ __pycache__/
 *.pyc
 dist/
 .DS_Store
+*.tsbuildinfo
+temp/
+backend/models/cascades/*.xml
+!backend/models/cascades/.gitkeep
