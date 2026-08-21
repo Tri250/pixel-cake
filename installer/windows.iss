@@ -78,7 +78,7 @@ Source: "..\backend\services\*"; DestDir: "{app}\backend\services"; Flags: recur
 Source: "..\backend\utils\*"; DestDir: "{app}\backend\utils"; Flags: recursesubdirs createallsubdirs
 
 ; Models and cascades
-Source: "..\backend\models\cascades\*.xml"; DestDir: "{app}\backend\models\cascades"; Flags: ignoreversion createallsubdirs
+Source: "..\backend\models\cascades\*.xml"; DestDir: "{app}\backend\models\cascades"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\backend\models\*.tflite"; DestDir: "{app}\backend\models"; Flags: ignoreversion
 
 ; Launcher and setup
