@@ -381,67 +381,95 @@ def main():
         return FileResponse(str(rpath), headers={"X-Result-Id": rid})
 
     @app.post("/api/enhance")
-    async def enhance(req: EnhanceRequest):
-        matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
+    async def enhance(request: Request):
+        """图像增强 - 支持 JSON body 和 Form-data"""
+        # Try JSON body first, then form
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+            form = await request.form()
+            body = dict(form)
+
+        image_id = body.get("image_id", "")
+        if not image_id:
+            raise HTTPException(400, "image_id is required")
+
+        # Extract all parameters with defaults
+        brightness = float(body.get("brightness", 0))
+        contrast = float(body.get("contrast", 0))
+        saturation = float(body.get("saturation", 0))
+        warmth = float(body.get("warmth", 0))
+        sharpness = float(body.get("sharpness", 0))
+        denoise = float(body.get("denoise", 0))
+        highlights = float(body.get("highlights", 0))
+        shadows = float(body.get("shadows", 0))
+        whites = float(body.get("whites", 0))
+        blacks = float(body.get("blacks", 0))
+        vibrance = float(body.get("vibrance", 0))
+        clarity = float(body.get("clarity", 0))
+        tint = float(body.get("tint", 0))
+        filter_name = body.get("filter", None)
+        filter_intensity = float(body.get("filter_intensity", 1.0))
+        skin_smooth = str(body.get("skin_smooth", "false")).lower() in ("true", "1", "yes")
+
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Image not found")
         img = load_image(str(matches[0]))
         enh = get_service("enhance")
 
-        # FIX: Handle filter mode
-        if req.filter:
+        # Handle filter mode
+        if filter_name:
             if enh:
-                result = enh.apply_filter(img, req.filter, intensity=req.filter_intensity)
+                result = enh.apply_filter(img, filter_name, intensity=filter_intensity)
             else:
-                # Fallback: return original
                 result = img
-        # FIX: Handle skin smooth mode
-        elif req.skin_smooth:
+        # Handle skin smooth mode
+        elif skin_smooth:
             if enh:
                 result = enh.skin_smooth(img)
             else:
-                # Fallback: bilateral filter for smooth effect
                 result = cv2.bilateralFilter(img, 9, 75, 75)
         else:
-            # FIX: Pass ALL parameters to adjust (including highlights, shadows, etc.)
             if enh:
                 result = enh.adjust(
                     img,
-                    brightness=req.brightness,
-                    contrast=req.contrast,
-                    saturation=req.saturation,
-                    warmth=req.warmth,
-                    sharpness=req.sharpness,
-                    denoise=req.denoise,
-                    highlights=req.highlights,
-                    shadows=req.shadows,
-                    whites=req.whites,
-                    blacks=req.blacks,
-                    vibrance=req.vibrance,
-                    clarity=req.clarity,
-                    tint=req.tint,
+                    brightness=brightness,
+                    contrast=contrast,
+                    saturation=saturation,
+                    warmth=warmth,
+                    sharpness=sharpness,
+                    denoise=denoise,
+                    highlights=highlights,
+                    shadows=shadows,
+                    whites=whites,
+                    blacks=blacks,
+                    vibrance=vibrance,
+                    clarity=clarity,
+                    tint=tint,
                 )
             else:
                 # Fallback: basic OpenCV adjustments
                 result = img.astype(np.float32)
-                if req.brightness != 0 or req.contrast != 0:
-                    result = result * (1.0 + req.contrast) + req.brightness * 255
-                if req.saturation != 0:
+                if brightness != 0 or contrast != 0:
+                    result = result * (1.0 + contrast) + brightness * 255
+                if saturation != 0:
                     hsv = cv2.cvtColor(result.clip(0, 255).astype(np.uint8), cv2.COLOR_BGR2HSV).astype(np.float32)
-                    hsv[:, :, 1] = hsv[:, :, 1] * (1.0 + req.saturation)
+                    hsv[:, :, 1] = hsv[:, :, 1] * (1.0 + saturation)
                     hsv[:, :, 1] = np.clip(hsv[:, :, 1], 0, 255)
                     result = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2BGR).astype(np.float32)
-                if req.warmth != 0:
-                    result[:, :, 2] += req.warmth * 30
-                    result[:, :, 0] -= req.warmth * 20
-                if req.denoise > 0:
-                    h_param = int(req.denoise * 15) + 3
+                if warmth != 0:
+                    result[:, :, 2] += warmth * 30
+                    result[:, :, 0] -= warmth * 20
+                if denoise > 0:
+                    h_param = int(denoise * 15) + 3
                     result = cv2.fastNlMeansDenoisingColored(
                         result.clip(0, 255).astype(np.uint8), None, h_param, h_param, 7, 21
                     ).astype(np.float32)
-                if req.sharpness > 0:
+                if sharpness > 0:
                     blurred = cv2.GaussianBlur(result, (0, 0), 3)
-                    result = result + (result - blurred) * req.sharpness * 3
+                    result = result + (result - blurred) * sharpness * 3
                 result = result.clip(0, 255).astype(np.uint8)
 
         rid = str(uuid.uuid4())[:8]
@@ -656,27 +684,46 @@ def main():
         eyeshadow_color: Optional[list] = None
 
     @app.post("/api/makeup")
-    async def makeup(req: MakeupRequest):
-        matches = list(UPLOAD_DIR.glob(f"{req.image_id}.*"))
+    async def makeup(request: Request):
+        """妆容调整 - 支持 JSON body 和 Form-data"""
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+            form = await request.form()
+            body = dict(form)
+
+        image_id = body.get("image_id", "")
+        if not image_id:
+            raise HTTPException(400, "image_id is required")
+
+        lipstick = float(body.get("lipstick", 0))
+        blush = float(body.get("blush", 0))
+        eyeshadow = float(body.get("eyeshadow", 0))
+        lip_color = body.get("lip_color", None)
+        blush_color = body.get("blush_color", None)
+        eyeshadow_color = body.get("eyeshadow_color", None)
+
+        matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Image not found")
         img = load_image(str(matches[0]))
         enh = get_service("enhance")
-        lip_c = tuple(req.lip_color) if req.lip_color else (0, 0, 200)
-        blush_c = tuple(req.blush_color) if req.blush_color else (100, 100, 230)
-        eye_c = tuple(req.eyeshadow_color) if req.eyeshadow_color else (120, 50, 50)
+        lip_c = tuple(lip_color) if lip_color else (0, 0, 200)
+        blush_c = tuple(blush_color) if blush_color else (100, 100, 230)
+        eye_c = tuple(eyeshadow_color) if eyeshadow_color else (120, 50, 50)
         if enh:
             result = enh.apply_makeup(
                 img,
-                lipstick=req.lipstick,
-                blush=req.blush,
-                eyeshadow=req.eyeshadow,
+                lipstick=lipstick,
+                blush=blush,
+                eyeshadow=eyeshadow,
                 lip_color=lip_c,
                 blush_color=blush_c,
                 eyeshadow_color=eye_c,
             )
         else:
-            result = img  # No fallback for makeup
+            result = img
         rid = str(uuid.uuid4())[:8]
         rpath = OUTPUT_DIR / f"{rid}.jpg"
         imwrite_safe(str(rpath), result)
@@ -684,16 +731,27 @@ def main():
 
     # -- AI 追色 2.0 --
     @app.post("/api/color-match")
-    async def color_match(image_id: str = Form(...), reference: UploadFile = File(...)):
+    async def color_match(image_id: str = Form(...), reference: UploadFile = File(None), reference_image_id: str = Form(None)):
+        """AI 追色 - 支持文件上传或已有图片ID作为参考"""
         matches = list(UPLOAD_DIR.glob(f"{image_id}.*"))
         if not matches:
             raise HTTPException(404, "Source image not found")
         img = load_image(str(matches[0]))
-        ref_content = await reference.read()
-        ref_array = np.frombuffer(ref_content, dtype=np.uint8)
-        ref_img = cv2.imdecode(ref_array, cv2.IMREAD_COLOR)
+
+        # Determine reference image: from uploaded file or from existing image_id
+        ref_img = None
+        if reference:
+            ref_content = await reference.read()
+            ref_array = np.frombuffer(ref_content, dtype=np.uint8)
+            ref_img = cv2.imdecode(ref_array, cv2.IMREAD_COLOR)
+        elif reference_image_id:
+            ref_matches = list(UPLOAD_DIR.glob(f"{reference_image_id}.*"))
+            if ref_matches:
+                ref_img = load_image(str(ref_matches[0]))
+        
         if ref_img is None:
-            raise HTTPException(400, "Cannot read reference image")
+            raise HTTPException(400, "Reference image required: upload 'reference' file or provide 'reference_image_id'")
+
         enh = get_service("enhance")
         if enh:
             result = enh.color_match_advanced(img, ref_img)

@@ -23,19 +23,45 @@ r = requests.post(f'{BASE}/upload', files={'file': ('test.jpg', buf, 'image/jpeg
 assert r.status_code == 200, f'Upload failed: {r.status_code}'
 image_id = r.json()['image_id']
 
-# Test all endpoints
+# Upload a second image for color-match reference
+img2 = np.random.randint(150, 255, (150, 150, 3), dtype=np.uint8)
+pil_img2 = Image.fromarray(img2[..., ::-1])
+buf2 = io.BytesIO()
+pil_img2.save(buf2, format='JPEG')
+buf2.seek(0)
+r2 = requests.post(f'{BASE}/upload', files={'file': ('ref.jpg', buf2, 'image/jpeg')})
+assert r2.status_code == 200, f'Reference upload failed: {r2.status_code}'
+ref_image_id = r2.json()['image_id']
+
+# Test form-data endpoints (use data=)
 for endpoint, data in [
     ('auto-segment', {'image_id': image_id, 'mode': 'person'}),
-    ('enhance', {'image_id': image_id, 'brightness': 0.1}),
     ('face-slim', {'image_id': image_id, 'strength': '0.3'}),
     ('hair-smooth', {'image_id': image_id, 'strength': '0.5'}),
     ('sky/replace', {'image_id': image_id, 'sky_type': 'sunset'}),
     ('relight', {'image_id': image_id, 'mode': 'natural'}),
-    ('makeup', {'image_id': image_id, 'lipstick': 0.3}),
-    ('color-match', {'image_id': image_id, 'reference_image_id': image_id, 'strength': '0.5'}),
 ]:
     r = requests.post(f'{BASE}/{endpoint}', data=data)
     assert r.status_code == 200, f'{endpoint} failed: {r.status_code}'
+
+# Test JSON endpoints (use json=)
+for endpoint, data in [
+    ('enhance', {'image_id': image_id, 'brightness': 0.1}),
+    ('makeup', {'image_id': image_id, 'lipstick': 0.3}),
+]:
+    r = requests.post(f'{BASE}/{endpoint}', json=data)
+    assert r.status_code == 200, f'{endpoint} failed: {r.status_code}'
+
+# Test color-match with reference image file upload
+ref_buf = io.BytesIO()
+pil_img2.save(ref_buf, format='JPEG')
+ref_buf.seek(0)
+r = requests.post(
+    f'{BASE}/color-match',
+    data={'image_id': image_id},
+    files={'reference': ('ref.jpg', ref_buf, 'image/jpeg')}
+)
+assert r.status_code == 200, f'color-match failed: {r.status_code}'
 
 # Test inpaint with valid mask_id
 sr = requests.post(f'{BASE}/auto-segment', data={'image_id': image_id, 'mode': 'person'})
