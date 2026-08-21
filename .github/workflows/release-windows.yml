@@ -8,7 +8,7 @@ on:
         required: true
         default: 'v1.0.0'
       build_exe:
-        description: 'Build Windows EXE with PyInstaller (slow, ~20min)'
+        description: 'Build Windows EXE (slow)'
         required: true
         default: 'false'
 
@@ -16,11 +16,9 @@ permissions:
   contents: write
 
 jobs:
-  # ── Step 1: Build frontend (shared, cached) ──
   build-frontend:
     name: Frontend Build
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
 
@@ -47,19 +45,17 @@ jobs:
           test -d frontend/dist/assets
           echo "Frontend build verified"
 
-      - name: Upload frontend build artifact
+      - name: Upload frontend artifact
         uses: actions/upload-artifact@v4
         with:
           name: frontend-dist
           path: frontend/dist
           retention-days: 7
 
-  # ── Step 2: Windows backend test + package ──
   build-windows:
     name: Windows Build & Package
     runs-on: windows-latest
     needs: build-frontend
-
     steps:
       - uses: actions/checkout@v4
 
@@ -79,166 +75,56 @@ jobs:
           cd backend
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
 
       - name: Verify backend imports
         run: |
           cd backend
           python test_smoke.py
 
-      # ── Option A: Build EXE with PyInstaller ──
-      - name: Build Windows EXE
-        if: ${{ inputs.build_exe == 'true' }}
-        run: |
-          $env:PATH = "$env:USERPROFILE\.local\pipx\_tools\pyinstaller\venv\Scripts;$env:PATH"
-          
-          # Copy frontend dist to frontend_dist for PyInstaller
-          if (Test-Path frontend_dist) { Remove-Item -Recurse -Force frontend_dist }
-          Copy-Item -Recurse frontend\dist frontend_dist
-          
-          # Copy backend services and utils
-          if (Test-Path services) { Remove-Item -Recurse -Force services }
-          if (Test-Path utils) { Remove-Item -Recurse -Force utils }
-          Copy-Item -Recurse backend\services services
-          Copy-Item -Recurse backend\utils utils
-          
-          # Ensure model directories exist
-          if (-not (Test-Path backend\models\cascades)) {
-            New-Item -ItemType Directory -Path backend\models\cascades
-          }
-          
-          # Download cascades if needed
-          python setup.py
-          
-          # Build with PyInstaller
-          pyinstaller pixel-cake.spec --clean --noconfirm
-          
-          if (-not (Test-Path dist\PixelCake.exe)) {
-            Write-Error "PixelCake.exe not found after build"
-            exit 1
-          }
-          
-          $exeSize = (Get-Item dist\PixelCake.exe).Length
-          $exeSizeMB = [math]::Round($exeSize / 1MB, 1)
-          Write-Host "Build successful: dist\PixelCake.exe ($exeSizeMB MB)"
-
-      # ── Option B: Package as zip (no EXE) ──
-      - name: Package as ZIP (no EXE)
-        if: ${{ inputs.build_exe != 'true' }}
+      - name: Package as ZIP
+        shell: pwsh
         run: |
           $VERSION = "${{ github.event.inputs.version }}"
           if (-not $VERSION) { $VERSION = "v1.0.0" }
-          
-          $PACKAGE_DIR = "release\pixel-cake-$VERSION-windows"
+
+          $PACKAGE_DIR = "release/pixel-cake-$VERSION-windows"
           New-Item -ItemType Directory -Force -Path $PACKAGE_DIR
-          
-          # Copy files
-          Copy-Item -Recurse backend "$PACKAGE_DIR\backend"
-          New-Item -ItemType Directory -Force -Path "$PACKAGE_DIR\frontend"
-          Copy-Item -Recurse frontend\dist\* "$PACKAGE_DIR\frontend\"
-          Copy-Item launcher.py "$PACKAGE_DIR\"
-          Copy-Item setup.py "$PACKAGE_DIR\"
-          Copy-Item build.bat "$PACKAGE_DIR\"
-          Copy-Item run.bat "$PACKAGE_DIR\"
-          if (Test-Path README.md) { Copy-Item README.md "$PACKAGE_DIR\" }
-          
-          # Create start.bat for release
-          $startBat = @'
-@echo off
-chcp 65001 >nul 2>&1
-cd /d "%~dp0"
-echo Installing dependencies...
-python -m pip install -r backend\requirements.txt -q
-echo Starting Pixel Cake...
-python launcher.py
-pause
-'@
-          $startBat | Out-File -FilePath "$PACKAGE_DIR\start.bat" -Encoding ASCII
-          
-          # Create start.ps1 for PowerShell
-          $startPs1 = @'
-# Pixel Cake - Start Script
-Set-Location $PSScriptRoot
-Write-Host "Installing dependencies..."
-python -m pip install -r backend/requirements.txt -q
-Write-Host "Starting Pixel Cake..."
-python launcher.py
-'@
-          $startPs1 | Out-File -FilePath "$PACKAGE_DIR\start.ps1" -Encoding ASCII
-          
-          # Create README
-          $readmeContent = @"
-# Pixel Cake $VERSION - Windows
 
-## Quick Start
-1. Install Python 3.10+ from https://python.org (check "Add to PATH")
-2. Double-click start.bat OR run:
-   ```
-   pip install -r backend/requirements.txt
-   python launcher.py
-   ```
+          Copy-Item -Recurse backend "$PACKAGE_DIR/backend"
+          New-Item -ItemType Directory -Force -Path "$PACKAGE_DIR/frontend"
+          Copy-Item -Recurse frontend/dist/* "$PACKAGE_DIR/frontend/"
+          Copy-Item launcher.py "$PACKAGE_DIR/"
+          Copy-Item setup.py "$PACKAGE_DIR/"
+          Copy-Item build.bat "$PACKAGE_DIR/"
+          Copy-Item run.bat "$PACKAGE_DIR/"
+          if (Test-Path README.md) { Copy-Item README.md "$PACKAGE_DIR/" }
 
-## Features
-- AI image inpainting (LaMa, Stable Diffusion, OpenCV)
-- Semantic segmentation (SAM2, MediaPipe, traditional CV)
-- Sky replacement (6 presets)
-- Color grading (9 filters, 16 adjustment parameters)
-- AI relighting, face slimming, hair smoothing, makeup
-- Color matching with LAB color space
+          $startBat = "@echo off`nchcp 65001 >nul 2>&1`ncd /d `"%~dp0`"`npython -m pip install -r backend/requirements.txt -q`npython launcher.py`npause"
+          $startBat | Out-File -FilePath "$PACKAGE_DIR/start.bat" -Encoding ASCII
 
-## System Requirements
-- Windows 10/11 (64-bit)
-- Python 3.10+
-- 4GB+ RAM
-- GPU optional (CUDA for acceleration)
+          $readmeContent = "# Pixel Cake $VERSION - Windows`n`n## Quick Start`n1. Install Python 3.10+ from https://python.org`n2. Double-click start.bat`n`n## System Requirements`n- Windows 10/11 (64-bit)`n- Python 3.10+`n- 4GB+ RAM`n- GPU optional`n`n## Uninstall`npython setup.py uninstall"
+          $readmeContent | Out-File -FilePath "$PACKAGE_DIR/README.md" -Encoding UTF8
 
-## Uninstall
-Just delete this folder. To clean data:
-  python setup.py uninstall
-"@
-          $readmeContent | Out-File -FilePath "$PACKAGE_DIR\README.md" -Encoding UTF8
-          
-          # Create zip archive
-          Compress-Archive -Path "$PACKAGE_DIR\*" -DestinationPath "pixel-cake-$VERSION-windows.zip" -Force
-          
-          $zipSize = (Get-Item "pixel-cake-$VERSION-windows.zip").Length
-          $zipSizeMB = [math]::Round($zipSize / 1MB, 1)
-          Write-Host "Created: pixel-cake-$VERSION-windows.zip ($zipSizeMB MB)"
+          Compress-Archive -Path "$PACKAGE_DIR/*" -DestinationPath "pixel-cake-$VERSION-windows.zip" -Force
 
-      - name: Upload Windows artifact (EXE)
-        if: ${{ inputs.build_exe == 'true' }}
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-exe
-          path: dist/PixelCake.exe
-          retention-days: 30
+          $zipSize = [math]::Round((Get-Item "pixel-cake-$VERSION-windows.zip").Length / 1MB, 1)
+          Write-Host "Created: pixel-cake-$VERSION-windows.zip ($zipSize MB)"
 
-      - name: Upload Windows artifact (ZIP)
-        if: ${{ inputs.build_exe != 'true' }}
+      - name: Upload Windows ZIP artifact
         uses: actions/upload-artifact@v4
         with:
           name: windows-zip
           path: pixel-cake-*-windows.zip
           retention-days: 30
 
-  # ── Step 3: Create Windows Release ──
   create-windows-release:
     name: Create Windows Release
     runs-on: ubuntu-latest
     needs: [build-windows]
-
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download Windows EXE artifact
-        if: ${{ inputs.build_exe == 'true' }}
-        uses: actions/download-artifact@v4
-        with:
-          name: windows-exe
-          path: release-assets
-
       - name: Download Windows ZIP artifact
-        if: ${{ inputs.build_exe != 'true' }}
         uses: actions/download-artifact@v4
         with:
           name: windows-zip
@@ -257,42 +143,27 @@ Just delete this folder. To clean data:
           echo "" >> $GITHUB_OUTPUT
           echo "### System Requirements" >> $GITHUB_OUTPUT
           echo "- Windows 10/11 (64-bit)" >> $GITHUB_OUTPUT
-          echo "- Python 3.10+ (for ZIP version)" >> $GITHUB_OUTPUT
+          echo "- Python 3.10+" >> $GITHUB_OUTPUT
           echo "- 4GB+ RAM" >> $GITHUB_OUTPUT
           echo "- GPU optional (CUDA for acceleration)" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### Installation" >> $GITHUB_OUTPUT
-          echo "#### EXE Version" >> $GITHUB_OUTPUT
-          echo "1. Double-click \`PixelCake.exe\`" >> $GITHUB_OUTPUT
-          echo "2. Browser opens automatically at http://127.0.0.1:8765" >> $GITHUB_OUTPUT
-          echo "3. Data stored in \`%APPDATA%\\PixelCake\`" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "#### ZIP Version" >> $GITHUB_OUTPUT
           echo "1. Extract archive" >> $GITHUB_OUTPUT
-          echo "2. Run \`start.bat\` or \`start.ps1\`" >> $GITHUB_OUTPUT
-          echo "3. Or manually: \`pip install -r backend/requirements.txt && python launcher.py\`" >> $GITHUB_OUTPUT
+          echo "2. Double-click start.bat" >> $GITHUB_OUTPUT
+          echo "3. Browser opens at http://127.0.0.1:8765" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### Features" >> $GITHUB_OUTPUT
           echo "- Full AI image editing pipeline" >> $GITHUB_OUTPUT
-          echo "- Inpainting: LaMa / Stable Diffusion / OpenCV Telea" >> $GITHUB_OUTPUT
-          echo "- Segmentation: SAM2 / MediaPipe / Traditional CV" >> $GITHUB_OUTPUT
-          echo "- Sky replacement: 6 presets (sunset, blue, cloudy, starry, golden_hour, overcast)" >> $GITHUB_OUTPUT
+          echo "- Inpainting / Segmentation / Sky Replacement" >> $GITHUB_OUTPUT
           echo "- 9 color filters + 16 adjustment parameters" >> $GITHUB_OUTPUT
-          echo "- AI relighting, face slimming, hair smoothing, makeup" >> $GITHUB_OUTPUT
-          echo "- Color matching with LAB color space" >> $GITHUB_OUTPUT
-          echo "" >> $GITHUB_OUTPUT
-          echo "### Security" >> $GITHUB_OUTPUT
-          echo "- All processing runs locally on your machine" >> $GITHUB_OUTPUT
-          echo "- No data sent to external servers" >> $GITHUB_OUTPUT
-          echo "- XSS/Clickjacking protection headers" >> $GITHUB_OUTPUT
-          echo "- Input validation and path traversal prevention" >> $GITHUB_OUTPUT
+          echo "- AI relighting, face slimming, makeup" >> $GITHUB_OUTPUT
+          echo "- All processing runs locally" >> $GITHUB_OUTPUT
           echo "" >> $GITHUB_OUTPUT
           echo "### Uninstall" >> $GITHUB_OUTPUT
-          echo "- EXE: Just delete the executable" >> $GITHUB_OUTPUT
-          echo "- ZIP: Delete the folder, run \`python setup.py uninstall\` to clean data" >> $GITHUB_OUTPUT
+          echo "python setup.py uninstall" >> $GITHUB_OUTPUT
           echo "EOF" >> $GITHUB_OUTPUT
 
-      - name: Clean existing release if tag exists
+      - name: Clean existing release
         run: |
           VERSION=${{ steps.version.outputs.version }}
           EXISTING_RELEASE=$(curl -s -H "Authorization: token $GITHUB_TOKEN" \
@@ -303,24 +174,21 @@ Just delete this folder. To clean data:
             curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
               -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/${{ github.repository }}/releases/$RELEASE_ID"
-            echo "Deleted existing release $RELEASE_ID"
           fi
-          # Also clean the Linux release for same version
           TAG_REF="refs/tags/$VERSION"
           curl -s -X DELETE -H "Authorization: token $GITHUB_TOKEN" \
             -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/${{ github.repository }}/git/$TAG_REF" || true
-          echo "Cleaned up existing tag $VERSION"
 
       - name: Create Windows Release
         uses: softprops/action-gh-release@v2
         with:
-          name: Pixel Cake ${{ steps.version.outputs.version }} (Windows)
+          name: "Pixel Cake ${{ steps.version.outputs.version }} (Windows)"
           tag_name: ${{ steps.version.outputs.version }}
           body: |
             ${{ steps.version.outputs.RELEASE_NOTES }}
           files: |
-            release-assets/*
+            release-assets/*.zip
           draft: false
           prerelease: true
         env:
