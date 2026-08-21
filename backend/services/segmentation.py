@@ -24,8 +24,18 @@ except ImportError:
 try:
     import mediapipe as mp
     HAS_MEDIAPIPE = True
+    # Detect MediaPipe version API
+    try:
+        from mediapipe import ImageFormat as _MpImageFormat
+        _MP_FORMAT_SRGB = _MpImageFormat.SRGB
+    except (ImportError, AttributeError):
+        try:
+            _MP_FORMAT_SRGB = mp.ImageFormat.SRGB
+        except (AttributeError, TypeError):
+            _MP_FORMAT_SRGB = None
 except ImportError:
     mp = None
+    _MP_FORMAT_SRGB = None
 
 
 class SegmentationService:
@@ -116,6 +126,23 @@ class SegmentationService:
         except Exception as e:
             print(f"[Segmentation] SAM v1 load error: {e}")
             return False
+
+    def _create_mp_image(self, rgb_image: np.ndarray):
+        """Create MediaPipe Image with version-compatible API."""
+        if mp is None:
+            return None
+        try:
+            if _MP_FORMAT_SRGB is not None:
+                return mp.Image(image_format=_MP_FORMAT_SRGB, data=rgb_image)
+            else:
+                # Try without format specification
+                return mp.Image(data=rgb_image)
+        except Exception:
+            # Fallback: try raw numpy buffer
+            try:
+                return mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_image)
+            except Exception:
+                return mp.Image(data=rgb_image)
 
     def _load_mediapipe(self) -> bool:
         """加载 MediaPipe ImageSegmenter"""
@@ -219,9 +246,8 @@ class SegmentationService:
 
     def _predict_mediapipe(self, image: np.ndarray) -> np.ndarray:
         """MediaPipe 分割"""
-        from mediapipe import Image as MpImage
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = MpImage(image_format=MpImage.image_format.SRGB, data=rgb)
+        mp_image = self._create_mp_image(rgb)
         result = self._mp_segmenter.segment(mp_image)
         category_mask = result.category_mask.numpy_view()
         person_mask = (category_mask > 0).astype(np.uint8) * 255
@@ -370,9 +396,8 @@ class SegmentationService:
 
     def _detect_people_mediapipe(self, image: np.ndarray) -> list[np.ndarray]:
         """MediaPipe 人物分割"""
-        from mediapipe import Image as MpImage
         rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        mp_image = MpImage(image_format=MpImage.image_format.SRGB, data=rgb)
+        mp_image = self._create_mp_image(rgb)
 
         try:
             result = self._mp_segmenter.segment(mp_image)
