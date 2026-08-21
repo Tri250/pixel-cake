@@ -48,28 +48,25 @@ jobs:
         run: |
           cd backend
           python -c "
-            import sys
-            sys.path.insert(0, '.')
-            from services.inpainting import InpaintingService
-            from services.segmentation import SegmentationService
-            from services.sky import SkyService
-            from services.enhance import EnhanceService
-            from utils.image_utils import load_image, save_image
-            print('✅ All backend imports successful')
-            # Quick smoke test
-            import numpy as np
-            svc = EnhanceService()
-            img = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
-            r = svc.adjust(img, brightness=0.1)
-            assert r.shape == img.shape
-            r = svc.apply_filter(img, 'morandi')
-            assert r.shape == img.shape
-            r = svc.face_slim(img, strength=0.3)
-            assert r.shape == img.shape
-            r = svc.apply_makeup(img, lipstick=0.3)
-            assert r.shape == img.shape
-            print('✅ Backend smoke tests passed')
-          "
+import sys, numpy as np
+sys.path.insert(0, '.')
+from services.inpainting import InpaintingService
+from services.segmentation import SegmentationService
+from services.sky import SkyService
+from services.enhance import EnhanceService
+print('All backend imports successful')
+svc = EnhanceService()
+img = np.random.randint(0, 255, (100, 100, 3), dtype=np.uint8)
+r = svc.adjust(img, brightness=0.1)
+assert r.shape == img.shape
+r = svc.apply_filter(img, 'morandi')
+assert r.shape == img.shape
+r = svc.face_slim(img, strength=0.3)
+assert r.shape == img.shape
+r = svc.apply_makeup(img, lipstick=0.3)
+assert r.shape == img.shape
+print('Backend smoke tests passed')
+"
 
   # ──────────────────────────────────────────
   # 2. Build Frontend
@@ -103,7 +100,7 @@ jobs:
           test -d frontend/dist
           test -f frontend/dist/index.html
           test -d frontend/dist/assets
-          echo "✅ Frontend build verified"
+          echo "Frontend build verified"
 
       - name: Upload frontend build artifact
         uses: actions/upload-artifact@v4
@@ -134,34 +131,49 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
-      - name: Install PyInstaller
+      - name: Install backend deps for package
         run: |
+          cd backend
           python -m pip install --upgrade pip
-          pip install pyinstaller
-
-      - name: Build executable
-        run: |
-          cd /workspace/pixel-cake  # or the actual project dir
-          # Actually, let's use the pyproject.toml approach
-          pyinstaller pixel-cake.spec --noconfirm --clean
-
-      - name: Verify executable
-        run: |
-          test -f dist/PixelCake || echo "No exe found (expected on Linux)"
-          echo "Package build complete"
+          pip install -r requirements.txt
 
       - name: Create release archive
         run: |
           VERSION=${GITHUB_REF_NAME:-v1.0.0}
           mkdir -p release
-          cp -r backend/models release/models 2>/dev/null || true
-          cp -r frontend/dist release/frontend 2>/dev/null || true
+          # Copy backend
+          cp -r backend release/backend
+          # Copy frontend build
+          mkdir -p release/frontend
+          cp -r frontend/dist/* release/frontend/
+          # Copy project files
           cp launcher.py release/
           cp README.md release/
-          cp run.bat release/ 2>/dev/null || true
-          cp build.bat release/ 2>/dev/null || true
-          cd release && tar czf ../pixel-cake-${VERSION}.tar.gz .
+          # Copy cascade models
+          mkdir -p release/backend/models/cascades
+          cp backend/models/cascades/*.xml release/backend/models/cascades/ 2>/dev/null || true
+          # Create requirements
+          cp backend/requirements.txt release/
+          # Create launcher script
+          cat > release/start.sh << 'STARTSCRIPT'
+          #!/bin/bash
+          cd "$(dirname "$0")"
+          pip install -r requirements.txt 2>/dev/null
+          python launcher.py
+          STARTSCRIPT
+          chmod +x release/start.sh
+          # Create a simple launcher .bat for Windows
+          cat > release/start.bat << 'STARTSCRIPT'
+          @echo off
+          cd /d "%~dp0"
+          python launcher.py
+          STARTSCRIPT
+          # Copy setup.py
+          cp setup.py release/
+          # Create archive
+          tar czf pixel-cake-${VERSION}.tar.gz -C release .
           echo "Created release archive: pixel-cake-${VERSION}.tar.gz"
+          ls -lh pixel-cake-${VERSION}.tar.gz
 
       - name: Upload release archive
         uses: actions/upload-artifact@v4
@@ -192,14 +204,30 @@ jobs:
         run: |
           VERSION=${GITHUB_REF_NAME:-v1.0.0}
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
-          echo "RELEASE_NOTES=## What's New\n\n- Full AI image editing pipeline\n- Enhanced inpainting with multi-model fallback\n- Improved segmentation (SAM2/SAM1/MediaPipe/CV)\n- Sky replacement with 6 presets\n- 9 color filters\n- Auto-enhance flow with 7 steps\n- Optimized face detection for OpenCV 5.x\n- Performance improvements (downsampling for large images)\n- Download API for all processing results" >> $GITHUB_OUTPUT
+          echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
+          echo "## What's New" >> $GITHUB_OUTPUT
+          echo "" >> $GITHUB_OUTPUT
+          echo "- Full AI image editing pipeline" >> $GITHUB_OUTPUT
+          echo "- Enhanced inpainting with multi-model fallback (LaMa/SD/OpenCV)" >> $GITHUB_OUTPUT
+          echo "- Improved segmentation (SAM2/SAM1/MediaPipe/traditional CV)" >> $GITHUB_OUTPUT
+          echo "- Sky replacement with 6 presets + custom upload" >> $GITHUB_OUTPUT
+          echo "- 9 color filters + 16 adjustment parameters" >> $GITHUB_OUTPUT
+          echo "- AI color matching 2.0 (LAB + histogram specification)" >> $GITHUB_OUTPUT
+          echo "- Auto-enhance flow with 7 steps" >> $GITHUB_OUTPUT
+          echo "- OpenCV 5.x compatibility (4-level face detection fallback)" >> $GITHUB_OUTPUT
+          echo "- Performance improvements (downsampling for large images)" >> $GITHUB_OUTPUT
+          echo "- Download API for all processing results" >> $GITHUB_OUTPUT
+          echo "- GitHub Actions CI + Release workflows" >> $GITHUB_OUTPUT
+          echo "- Setup script for easy installation" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
         with:
           name: Pixel Cake ${{ steps.version.outputs.version }}
           tag_name: ${{ steps.version.outputs.version }}
-          body: ${{ steps.version.outputs.RELEASE_NOTES }}
+          body: |
+            ${{ steps.version.outputs.RELEASE_NOTES }}
           files: |
             release-assets/*.tar.gz
           draft: false

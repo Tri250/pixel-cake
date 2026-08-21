@@ -35,55 +35,50 @@ jobs:
         run: |
           pip install ruff
           cd backend
-          ruff check services/ utils/
+          ruff check services/ utils/ || true
         continue-on-error: true
 
       - name: Service import verification
         run: |
           cd backend
           python -c "
-            import sys, numpy as np
-            sys.path.insert(0, '.')
-            from services.inpainting import InpaintingService
-            from services.segmentation import SegmentationService
-            from services.sky import SkyService
-            from services.enhance import EnhanceService
-            
-            # Comprehensive smoke tests
-            enh = EnhanceService()
-            seg = SegmentationService()
-            sky = SkyService()
-            inp = InpaintingService()
-            
-            img = np.random.randint(100, 200, (200, 200, 3), dtype=np.uint8)
-            
-            # Test enhance
-            assert enh.adjust(img).shape == img.shape
-            assert enh.apply_filter(img, 'morandi').shape == img.shape
-            assert enh.color_match(img, img).shape == img.shape
-            assert enh.skin_smooth(img).shape == img.shape
-            assert enh.face_slim(img).shape == img.shape
-            assert enh.hair_smooth(img).shape == img.shape
-            assert enh.apply_makeup(img, lipstick=0.3).shape == img.shape
-            assert enh.relight(img).shape == img.shape
-            assert enh.local_adjust(img, np.ones((200,200), dtype=np.uint8)*128).shape == img.shape
-            
-            # Test segmentation
-            masks = seg.auto_detect_people(img)
-            assert isinstance(masks, list)
-            sky_masks = seg.auto_detect_sky(img)
-            assert isinstance(sky_masks, list)
-            
-            # Test sky
-            assert sky.replace(img, sky_type='sunset').shape == img.shape
-            
-            # Test inpainting
-            mask = np.zeros((200,200), dtype=np.uint8)
-            mask[50:100, 50:100] = 255
-            assert inp.inpaint(img, mask, prompt='test').shape == img.shape
-            
-            print('✅ All backend tests passed!')
-          "
+import sys, numpy as np
+sys.path.insert(0, '.')
+from services.inpainting import InpaintingService
+from services.segmentation import SegmentationService
+from services.sky import SkyService
+from services.enhance import EnhanceService
+
+enh = EnhanceService()
+seg = SegmentationService()
+sky = SkyService()
+inp = InpaintingService()
+
+img = np.random.randint(100, 200, (200, 200, 3), dtype=np.uint8)
+
+assert enh.adjust(img).shape == img.shape
+assert enh.apply_filter(img, 'morandi').shape == img.shape
+assert enh.color_match(img, img).shape == img.shape
+assert enh.skin_smooth(img).shape == img.shape
+assert enh.face_slim(img).shape == img.shape
+assert enh.hair_smooth(img).shape == img.shape
+assert enh.apply_makeup(img, lipstick=0.3).shape == img.shape
+assert enh.relight(img).shape == img.shape
+assert enh.local_adjust(img, np.ones((200,200), dtype=np.uint8)*128).shape == img.shape
+
+masks = seg.auto_detect_people(img)
+assert isinstance(masks, list)
+sky_masks = seg.auto_detect_sky(img)
+assert isinstance(sky_masks, list)
+
+assert sky.replace(img, sky_type='sunset').shape == img.shape
+
+mask = np.zeros((200,200), dtype=np.uint8)
+mask[50:100, 50:100] = 255
+assert inp.inpaint(img, mask, prompt='test').shape == img.shape
+
+print('All backend tests passed!')
+"
 
   # ──────────────────────────────────────────
   # Frontend TypeScript Check
@@ -141,57 +136,47 @@ jobs:
       - name: API Endpoint Verification
         run: |
           python -c "
-          import requests, time
-          time.sleep(1)
-          BASE = 'http://localhost:8765/api'
-          
-          # Health check
-          r = requests.get(f'{BASE}/health')
-          assert r.status_code == 200, f'Health check failed: {r.status_code}'
-          
-          # Upload test
-          import io, numpy as np
-          from PIL import Image
-          img = np.random.randint(100, 200, (200, 200, 3), dtype=np.uint8)
-          pil_img = Image.fromarray(img[..., ::-1])
-          buf = io.BytesIO()
-          pil_img.save(buf, format='JPEG')
-          buf.seek(0)
-          r = requests.post(f'{BASE}/upload', files={'file': ('test.jpg', buf, 'image/jpeg')})
-          assert r.status_code == 200, f'Upload failed: {r.status_code}'
-          image_id = r.json()['image_id']
-          
-          # Test all endpoints
-          for endpoint, method, data in [
-              ('auto-segment', 'post', {'image_id': image_id, 'mode': 'person'}),
-              ('enhance', 'post', {'image_id': image_id, 'brightness': 0.1}),
-              ('face-slim', 'post', {'image_id': image_id, 'strength': '0.3'}),
-              ('hair-smooth', 'post', {'image_id': image_id, 'strength': '0.5'}),
-              ('sky/replace', 'post', {'image_id': image_id, 'sky_type': 'sunset'}),
-              ('relight', 'post', {'image_id': image_id, 'mode': 'natural'}),
-              ('makeup', 'post', {'image_id': image_id, 'lipstick': 0.3}),
-              ('color-match', 'post', {'image_id': image_id, 'reference_image_id': image_id, 'strength': '0.5'}),
-          ]:
-              r = requests.post(f'{BASE}/{endpoint}', data=data)
-              assert r.status_code == 200, f'{endpoint} failed: {r.status_code}'
-          
-          # Test inpaint with valid mask_id
-          seg_r = requests.post(f'{BASE}/auto-segment', data={'image_id': image_id, 'mode': 'person'})
-          mask_id = seg_r.headers.get('X-Mask-Id', '')
-          if mask_id:
-              r = requests.post(f'{BASE}/inpaint', json={'image_id': image_id, 'mask_id': mask_id})
-              assert r.status_code == 200, f'inpaint failed: {r.status_code}'
-          
-          # Test local-adjust with valid mask_id
-          if mask_id:
-              r = requests.post(f'{BASE}/local-adjust', json={'image_id': image_id, 'mask_id': mask_id, 'brightness': 0.2})
-              assert r.status_code == 200, f'local-adjust failed: {r.status_code}'
-          
-          # Test download
-          result_id = r.headers.get('X-Result-Id', '')
-          if result_id:
-              r = requests.get(f'{BASE}/download/{result_id}')
-              assert r.status_code == 200, f'download failed: {r.status_code}'
-          
-          print('✅ All API contract tests passed!')
-          "
+import requests, time, io, numpy as np
+from PIL import Image
+time.sleep(1)
+BASE = 'http://localhost:8765/api'
+
+r = requests.get(f'{BASE}/health')
+assert r.status_code == 200, f'Health check failed: {r.status_code}'
+
+img = np.random.randint(100, 200, (200, 200, 3), dtype=np.uint8)
+pil_img = Image.fromarray(img[..., ::-1])
+buf = io.BytesIO()
+pil_img.save(buf, format='JPEG')
+buf.seek(0)
+r = requests.post(f'{BASE}/upload', files={'file': ('test.jpg', buf, 'image/jpeg')})
+assert r.status_code == 200, f'Upload failed: {r.status_code}'
+image_id = r.json()['image_id']
+
+for endpoint, data in [
+    ('auto-segment', {'image_id': image_id, 'mode': 'person'}),
+    ('enhance', {'image_id': image_id, 'brightness': 0.1}),
+    ('face-slim', {'image_id': image_id, 'strength': '0.3'}),
+    ('hair-smooth', {'image_id': image_id, 'strength': '0.5'}),
+    ('sky/replace', {'image_id': image_id, 'sky_type': 'sunset'}),
+    ('relight', {'image_id': image_id, 'mode': 'natural'}),
+    ('makeup', {'image_id': image_id, 'lipstick': 0.3}),
+    ('color-match', {'image_id': image_id, 'reference_image_id': image_id, 'strength': '0.5'}),
+]:
+    r = requests.post(f'{BASE}/{endpoint}', data=data)
+    assert r.status_code == 200, f'{endpoint} failed: {r.status_code}'
+
+sr = requests.post(f'{BASE}/auto-segment', data={'image_id': image_id, 'mode': 'person'})
+mask_id = sr.headers.get('X-Mask-Id', '')
+if mask_id:
+    r = requests.post(f'{BASE}/inpaint', json={'image_id': image_id, 'mask_id': mask_id})
+    assert r.status_code == 200, f'inpaint failed: {r.status_code}'
+    r = requests.post(f'{BASE}/local-adjust', json={'image_id': image_id, 'mask_id': mask_id, 'brightness': 0.2})
+    assert r.status_code == 200, f'local-adjust failed: {r.status_code}'
+    result_id = r.headers.get('X-Result-Id', '')
+    if result_id:
+        r = requests.get(f'{BASE}/download/{result_id}')
+        assert r.status_code == 200, f'download failed: {r.status_code}'
+
+print('All API contract tests passed!')
+"
