@@ -114,7 +114,11 @@ jobs:
 
       - name: Create release archive
         run: |
-          VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          fi
+          VERSION=$(echo "$VERSION" | sed 's|refs/tags/||')
           mkdir -p release
           cp -r backend release/backend
           mkdir -p release/frontend
@@ -165,7 +169,13 @@ jobs:
       - name: Extract version
         id: version
         run: |
-          VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          # Use input version for workflow_dispatch, or GITHUB_REF_NAME for tag push
+          VERSION="${{ github.event.inputs.version }}"
+          if [ -z "$VERSION" ]; then
+            VERSION=${GITHUB_REF_NAME:-v1.0.0}
+          fi
+          # Clean up version: remove refs/tags/ prefix if present
+          VERSION=$(echo "$VERSION" | sed 's|refs/tags/||')
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "RELEASE_NOTES<<EOF" >> $GITHUB_OUTPUT
           echo "## What's New" >> $GITHUB_OUTPUT
