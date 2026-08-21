@@ -185,13 +185,17 @@ jobs:
             exit 1
           }
 
-          $installer = Get-ChildItem "installer_output\*.exe" | Select-Object -First 1
+          $installer = Get-ChildItem "installer\installer_output\*.exe" | Select-Object -First 1
           if (-not $installer) {
             Write-Error "No installer EXE found!"
             exit 1
           }
           $installerSize = [math]::Round($installer.Length / 1MB, 1)
           Write-Host "Installer built: $($installer.Name) ($installerSize MB)"
+
+          # Copy installer to workspace root for artifact upload
+          Copy-Item $installer.FullName "pixel-cake-$VERSION-Setup-Windows.exe"
+          Write-Host "Copied to: pixel-cake-$VERSION-Setup-Windows.exe"
 
       - name: Package release files
         shell: pwsh
@@ -200,7 +204,7 @@ jobs:
           if (-not $VERSION) { $VERSION = "v1.0.0" }
           $RELEASE_DIR = "release\pixel-cake-$VERSION-windows"
           New-Item -ItemType Directory -Force -Path $RELEASE_DIR | Out-Null
-          $installer = Get-ChildItem "installer_output\*.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
+          $installer = Get-ChildItem "pixel-cake-*-Setup-Windows.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
           if ($installer) {
             Copy-Item $installer.FullName "$RELEASE_DIR\"
             Write-Host "  Added installer: $($installer.Name)"
@@ -232,7 +236,7 @@ jobs:
         with:
           name: windows-installer
           path: |
-            installer_output/*.exe
+            pixel-cake-*-Setup-Windows.exe
             pixel-cake-*-windows.zip
           retention-days: 30
 
