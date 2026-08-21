@@ -83,58 +83,33 @@ jobs:
         shell: pwsh
         run: |
           $isccPath = $null
-          $installDir = "C:\Inno Setup 6"
-          $isccPath = Join-Path $installDir "ISCC.exe"
-
-          if (-not (Test-Path $isccPath)) {
-            Write-Host "Downloading Inno Setup 6.4.1 from GitHub..."
-            $url = "https://github.com/jrsoftware/issrc/releases/download/is-6.4.1/innosetup-6.4.1.exe"
-            $installer = "innosetup_install.exe"
-            try {
-              Invoke-WebRequest -Uri $url -OutFile $installer -UseBasicParsing
-            } catch {
-              # Try alternate URL
-              $url2 = "https://jrsoftware.org/download.php/is.exe"
-              Invoke-WebRequest -Uri $url2 -OutFile $installer -UseBasicParsing
-            }
-            Start-Process -FilePath $installer -ArgumentList "/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP- /DIR=`"$installDir`"" -Wait
-            Remove-Item $installer -Force -ErrorAction SilentlyContinue
+          $installDir = $null
+          $paths = @(
+            "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
+            "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
+            "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
+            "C:\Program Files\Inno Setup 6\ISCC.exe",
+            "C:\Inno Setup 6\ISCC.exe"
+          )
+          foreach ($p in $paths) {
+            if (Test-Path $p) { $isccPath = $p; $installDir = Split-Path $p; break }
           }
 
-          if (-not (Test-Path $isccPath)) {
-            # Search common paths
-            $paths = @(
-              "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
-              "${env:ProgramFiles}\Inno Setup 6\ISCC.exe",
-              "C:\Program Files (x86)\Inno Setup 6\ISCC.exe",
-              "C:\Program Files\Inno Setup 6\ISCC.exe"
-            )
+          if (-not $isccPath) {
+            Write-Host "Installing Inno Setup via winget..."
+            winget install --id JRSoftware.InnoSetup --silent --accept-source-agreements --accept-package-agreements 2>&1 | Out-Null
+            Start-Sleep -Seconds 10
             foreach ($p in $paths) {
               if (Test-Path $p) { $isccPath = $p; $installDir = Split-Path $p; break }
             }
           }
 
-          if (-not (Test-Path $isccPath)) {
-            Write-Error "Inno Setup installation failed"
-            exit 1
-          }
-
-          # Verify Languages folder
-          $languagesDir = Join-Path $installDir "Languages"
-          if (-not (Test-Path $languagesDir)) {
-            Write-Host "Languages folder not found at $languagesDir"
-            Write-Host "Listing Inno Setup dir:"
-            Get-ChildItem $installDir -Directory | ForEach-Object { Write-Host "  $_" }
-          }
-
-          $englishIsl = Join-Path $languagesDir "English.isl"
-          if (-not (Test-Path $englishIsl)) {
-            Write-Error "English.isl not found. Inno Setup installation may be incomplete."
+          if (-not $isccPath) {
+            Write-Error "Inno Setup could not be installed. Please install from https://jrsoftware.org/isdl.php"
             exit 1
           }
 
           Write-Host "Inno Setup ready: $isccPath"
-          Write-Host "Languages: $languagesDir"
           echo "ISCC_PATH=$isccPath" >> $env:GITHUB_OUTPUT
 
       - name: Create icon
