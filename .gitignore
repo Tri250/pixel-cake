@@ -5,8 +5,17 @@ frontend_dist/
 __pycache__/
 *.pyc
 dist/
+build/
 .DS_Store
 *.tsbuildinfo
 temp/
+
+services/
+utils/
+
+.trae-html-share-packages/
+.trae-html-share-plugins/
+frontend/node_modules/
+
 backend/models/cascades/*.xml
 !backend/models/cascades/.gitkeep
