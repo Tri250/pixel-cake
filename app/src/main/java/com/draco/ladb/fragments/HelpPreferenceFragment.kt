@@ -57,6 +57,12 @@ class HelpPreferenceFragment : PreferenceFragmentCompat() {
                 startActivity(intent)
             }
 
+            getString(R.string.disclaimer_key) -> MaterialAlertDialogBuilder(requireContext())
+                .setTitle(getString(R.string.disclaimer_title))
+                .setMessage(getString(R.string.disclaimer_full))
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+
             else -> {
                 if (preference !is SwitchPreference && preference !is EditTextPreference) {
                     MaterialAlertDialogBuilder(requireContext())

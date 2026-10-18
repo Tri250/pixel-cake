@@ -117,4 +117,10 @@
     <string name="strict_ip_check_summary">Nur gefundene Geräte akzeptieren, deren IP mit diesem Gerät
         übereinstimmt. Deaktivieren, wenn nichts gefunden wird
     </string>
+    <string name="author_title">Autor</string>
+
+    <string name="disclaimer_title">Haftungsausschluss</string>
+    <string name="disclaimer_summary">Bitte vor der Nutzung lesen</string>
+    <string name="disclaimer_full">Diese App wird „wie besehen" und ohne jegliche ausdrückliche oder stillschweigende Garantie bereitgestellt. Die Autoren haften nicht für direkte oder indirekte Schäden, die aus der Nutzung oder dem Missbrauch dieser App entstehen. ADB-Befehle können den Systemzustand deines Geräts verändern — führe nur Befehle aus, die du vollständig verstehst.</string>
+
 </resources>

@@ -104,4 +104,10 @@
 
     <string name="strict_ip_check_title">严格 IP 校验</string>
     <string name="strict_ip_check_summary">只接受与本机 IP 一致的发现结果。如果一直发现不到设备，请关闭此选项</string>
+    <string name="author_title">作者</string>
+
+    <string name="disclaimer_title">免责声明</string>
+    <string name="disclaimer_summary">使用本应用前请阅读</string>
+    <string name="disclaimer_full">本应用按“现状”提供，不附带任何明示或暗示的担保。对于因使用或滥用本应用而导致的任何直接或间接损失，作者不承担责任。ADB 命令可能改变设备的系统状态，请仅执行你完全理解并确认安全的命令。</string>
+
 </resources>

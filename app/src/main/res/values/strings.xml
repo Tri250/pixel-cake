@@ -140,4 +140,13 @@
     <string name="strict_ip_check_title">Strict IP check</string>
     <string name="strict_ip_check_summary">Only accept discovered devices matching this device IP address. Disable if discovery finds nothing</string>
     <string name="strict_ip_check_key" translatable="false">strict_ip_check</string>
+    <string name="author_key" translatable="false">author</string>
+    <string name="author_title">Author</string>
+    <string name="author_summary" translatable="false">带娃的小陈工</string>
+
+    <string name="disclaimer_key" translatable="false">disclaimer</string>
+    <string name="disclaimer_title">Disclaimer</string>
+    <string name="disclaimer_summary">Please read before using this app</string>
+    <string name="disclaimer_full">This app is provided "as is", without warranty of any kind, express or implied. The authors shall not be held liable for any direct or indirect damages arising from the use or misuse of this app. ADB commands may alter your device\'s system state — only run commands that you fully understand.</string>
+
 </resources>

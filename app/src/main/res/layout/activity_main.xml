@@ -20,7 +20,8 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="-6dp"
-            android:indeterminate="true"/>
+            android:indeterminate="true"
+            android:indeterminateTint="@color/green"/>
 
         <ScrollView
             android:id="@+id/output_scrollview"
@@ -41,8 +42,10 @@
                     style="@style/TextAppearance.AppCompat.Body1"
                     android:layout_width="wrap_content"
                     android:layout_height="match_parent"
+                    android:lineSpacingMultiplier="1.15"
+                    android:textColor="?android:attr/textColorPrimary"
                     android:textIsSelectable="true"
-                    android:textSize="12sp"/>
+                    android:textSize="14sp"/>
             </HorizontalScrollView>
         </ScrollView>
 

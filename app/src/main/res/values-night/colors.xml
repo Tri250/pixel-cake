@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Material Green 400: brighter primary for dark surfaces -->
+    <color name="green">#66BB6A</color>
+</resources>

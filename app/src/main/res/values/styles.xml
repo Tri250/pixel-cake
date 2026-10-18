@@ -10,4 +10,16 @@
         <item name="android:layout_marginHorizontal">@dimen/bookmark_card_margin</item>
         <item name="android:layout_gravity">center_vertical</item>
     </style>
+
+    <!-- Subtle fade/slide transitions between activities -->
+    <style name="WindowAnimation" parent="android:Animation.Activity">
+        <item name="android:activityOpenEnterAnimation">@anim/slide_in_right</item>
+        <item name="android:activityOpenExitAnimation">@anim/fade_out</item>
+        <item name="android:activityCloseEnterAnimation">@anim/fade_in</item>
+        <item name="android:activityCloseExitAnimation">@anim/slide_out_right</item>
+        <item name="android:taskOpenEnterAnimation">@anim/slide_in_right</item>
+        <item name="android:taskOpenExitAnimation">@anim/fade_out</item>
+        <item name="android:taskCloseEnterAnimation">@anim/fade_in</item>
+        <item name="android:taskCloseExitAnimation">@anim/slide_out_right</item>
+    </style>
 </resources>

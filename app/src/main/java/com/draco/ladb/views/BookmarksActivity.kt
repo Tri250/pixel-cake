@@ -14,6 +14,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
+import androidx.recyclerview.widget.DefaultItemAnimator
 import com.draco.ladb.R
 import com.draco.ladb.databinding.ActivityBookmarksBinding
 import com.draco.ladb.domain.JsonCodec
@@ -70,6 +71,10 @@ class BookmarksActivity : AppCompatActivity() {
         initialText = intent.getStringExtra(Intent.EXTRA_TEXT) ?: ""
 
         viewModel.prepareRecycler(this, binding.recycler)
+        binding.recycler.itemAnimator = DefaultItemAnimator().apply {
+            addDuration = 150
+            removeDuration = 150
+        }
         viewModel.recyclerAdapter.pickHook = {
             val intent = Intent()
                 .putExtra(Intent.EXTRA_TEXT, it)

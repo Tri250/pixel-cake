@@ -75,6 +75,11 @@
     <PreferenceCategory android:title="@string/about">
         <Preference
             android:icon="@drawable/ic_baseline_person_24"
+            android:key="@string/author_key"
+            android:summary="@string/author_summary"
+            android:title="@string/author_title" />
+        <Preference
+            android:icon="@drawable/ic_baseline_person_24"
             android:key="@string/developer_key"
             android:summary="@string/developer_summary"
             android:title="@string/developer_title" />
@@ -93,5 +98,10 @@
             android:key="@string/licenses_key"
             android:summary="@string/licenses_summary"
             android:title="@string/licenses_title" />
+        <Preference
+            android:icon="@drawable/ic_baseline_info_24"
+            android:key="@string/disclaimer_key"
+            android:summary="@string/disclaimer_summary"
+            android:title="@string/disclaimer_title" />
     </PreferenceCategory>
 </PreferenceScreen>

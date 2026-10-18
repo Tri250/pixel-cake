@@ -6,6 +6,7 @@
         <item name="android:windowBackground">?colorSurface</item>
         <item name="android:statusBarColor">?colorSurface</item>
         <item name="android:navigationBarColor">?colorSurface</item>
+        <item name="android:windowAnimationStyle">@style/WindowAnimation</item>
         <item name="fontFamily">monospace</item>
     </style>
 </resources>
