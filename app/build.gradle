@@ -12,8 +12,8 @@ android {
         applicationId "com.draco.ladb"
         minSdk 26
         targetSdk 36
-        versionCode 57
-        versionName "2.0.0-alpha02"
+        versionCode 58
+        versionName "2.0.0-alpha03"
 
         ndk {
             /* Only the ABIs that ship with bundled native libs */
