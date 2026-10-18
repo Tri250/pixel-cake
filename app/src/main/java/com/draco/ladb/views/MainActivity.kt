@@ -227,7 +227,9 @@ class MainActivity : AppCompatActivity() {
 
         if (settings.blockingKeepScreenOn())
             window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
-        binding.output.textSize = settings.blockingFontSize().toFloatOrNull() ?: 14f
+        /* Clamp the font size so 0/negative/junk input cannot blank the terminal */
+        binding.output.textSize =
+            settings.blockingFontSize().toFloatOrNull()?.coerceIn(6f, 48f) ?: 14f
 
         setupUI()
         setupDataListeners()

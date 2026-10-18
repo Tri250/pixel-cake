@@ -26,6 +26,8 @@ import kotlin.time.Duration.Companion.seconds
 class ADB(private val context: Context) {
     companion object {
         const val MAX_OUTPUT_BUFFER_SIZE = 1024 * 16
+        const val MIN_OUTPUT_BUFFER_SIZE = 1024
+        const val MAX_ALLOWED_OUTPUT_BUFFER_SIZE = 1024 * 1024
         const val OUTPUT_BUFFER_DELAY_MS = 100L
         private const val PREF_LAST_ADB_PORT = "last_adb_port"
         private const val PREF_QS_CONNECTED = "qs_connected"
@@ -111,15 +113,18 @@ class ADB(private val context: Context) {
     )
 
     /**
-     * Returns the user buffer size if valid, else the default
+     * Returns the user buffer size if valid, else the default. The value is
+     * clamped because out-of-range input (0, negative, absurdly large) would
+     * either blank the terminal or crash the reader on allocation.
      */
     fun getOutputBufferSize(): Int {
         val userValue = settings.blockingBufferSize()
-        return try {
-            Integer.parseInt(userValue)
+        val parsed = try {
+            Integer.parseInt(userValue.trim())
         } catch (_: NumberFormatException) {
             MAX_OUTPUT_BUFFER_SIZE
         }
+        return parsed.coerceIn(MIN_OUTPUT_BUFFER_SIZE, MAX_ALLOWED_OUTPUT_BUFFER_SIZE)
     }
 
     /**
