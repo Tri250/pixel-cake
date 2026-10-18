@@ -198,8 +198,10 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun requestPairing() {
+        viewModel.isPairing.value = true
         askToPair { success ->
             if (success) {
+                viewModel.isPairing.value = false
                 viewModel.setPairedBefore(true)
                 viewModel.startADBServer()
             } else {
@@ -208,6 +210,15 @@ class MainActivity : AppCompatActivity() {
                 runOnUiThread { requestPairing() }
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+
+        /* Reconnect when the session was torn down externally (quick settings
+           tile) or the previous startup attempt failed. */
+        if (viewModel.isPairing.value != true && viewModel.adb.running.value != true)
+            viewModel.startADBServer()
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {

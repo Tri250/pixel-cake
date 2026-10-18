@@ -21,6 +21,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 class MainActivityViewModel(application: Application) : AndroidViewModel(application) {
     private val _outputText = MutableLiveData<String>()
@@ -29,6 +30,8 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     val isPairing = MutableLiveData<Boolean>()
 
     private var integrityRan = false
+
+    private val startingServer = AtomicBoolean(false)
 
     private val settings = SettingsRepository.getInstance(application.applicationContext)
     private val verifiedPrefs = PreferenceManager
@@ -51,18 +54,24 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
 
 
     fun startADBServer(callback: ((Boolean) -> (Unit))? = null) {
-        // Don't start if it's already started.
-        if (_viewModelHasStartedADB.value == true || adb.running.value == true) return
+        // Don't start if it's already started. A single start is guaranteed by
+        // the CAS below plus ADB.initServer serializing concurrent callers.
+        if (adb.running.value == true) return
+        if (!startingServer.compareAndSet(false, true)) return
 
         dnsDiscover.strictIpCheck = settings.blockingStrictIpCheck()
 
         viewModelScope.launch(Dispatchers.IO) {
-            val success = adb.initServer()
-            if (success) {
-                startShellDeathThread()
-                _viewModelHasStartedADB.postValue(true)
+            try {
+                val success = adb.initServer()
+                if (success) {
+                    startShellDeathThread()
+                    _viewModelHasStartedADB.postValue(true)
+                }
+                callback?.invoke(success)
+            } finally {
+                startingServer.set(false)
             }
-            callback?.invoke(success)
         }
     }
 
@@ -101,9 +110,13 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Start a death listener to restart the shell once it dies
+     * Start a death listener to restart the shell once it dies.
+     * Only one listener may exist; ADB tracks the armed state.
      */
     private fun startShellDeathThread() {
+        if (!adb.armDeathListener())
+            return
+
         viewModelScope.launch(Dispatchers.IO) {
             adb.waitForDeathAndReset()
         }

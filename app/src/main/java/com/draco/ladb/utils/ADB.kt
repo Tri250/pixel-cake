@@ -20,6 +20,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.PrintStream
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.seconds
 
 class ADB(private val context: Context) {
@@ -71,6 +72,18 @@ class ADB(private val context: Context) {
      */
     @Volatile
     private var manualDisconnect = false
+
+    /**
+     * Tracks whether the auto-reset (death listener) loop is running so that
+     * concurrent starts never spawn a second one.
+     */
+    private val deathListenerArmed = AtomicBoolean(false)
+
+    /**
+     * Arm the auto-reset loop. Returns false if a listener is already
+     * running; disarmed by [disconnect].
+     */
+    fun armDeathListener(): Boolean = deathListenerArmed.compareAndSet(false, true)
 
     /**
      * Is the shell closed for any reason?
@@ -146,11 +159,13 @@ class ADB(private val context: Context) {
      * Start the ADB server
      */
     fun initServer(): Boolean {
-        if (_running.value == true || tryingToPair)
-            return true
+        synchronized(this) {
+            if (_running.value == true || tryingToPair)
+                return true
 
-        manualDisconnect = false
-        tryingToPair = true
+            manualDisconnect = false
+            tryingToPair = true
+        }
 
         val autoShell = settings.blockingAutoShell()
 
@@ -524,6 +539,7 @@ class ADB(private val context: Context) {
      */
     fun disconnect() {
         manualDisconnect = true
+        deathListenerArmed.set(false)
         setState(ShellSessionState.IDLE)
         _running.postValue(false)
 
