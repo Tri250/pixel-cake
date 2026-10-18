@@ -66,6 +66,13 @@ class ADB(private val context: Context) {
     private var tryingToPair = false
 
     /**
+     * Set when the user explicitly tears the session down (quick settings
+     * tile). Prevents the death listener from silently reconnecting.
+     */
+    @Volatile
+    private var manualDisconnect = false
+
+    /**
      * Is the shell closed for any reason?
      */
     private val _closed = MutableLiveData(false)
@@ -142,6 +149,7 @@ class ADB(private val context: Context) {
         if (_running.value == true || tryingToPair)
             return true
 
+        manualDisconnect = false
         tryingToPair = true
 
         val autoShell = settings.blockingAutoShell()
@@ -422,6 +430,13 @@ class ADB(private val context: Context) {
             }
 
             shellSession.awaitDeath()
+
+            /* The user asked to disconnect; do not resurrect the server */
+            if (manualDisconnect) {
+                debug("Shell closed on purpose; skipping auto-reset")
+                return
+            }
+
             setState(ShellSessionState.DEAD)
             _running.postValue(false)
             debug("Shell is dead, resetting...")
@@ -502,17 +517,24 @@ class ADB(private val context: Context) {
 
     /**
      * Tear down the shell and the ADB server (used by the quick settings tile)
+     *
+     * The state is flipped synchronously so callers (and the tile) observe the
+     * change immediately, while the blocking server teardown runs off the main
+     * thread to avoid ANRs.
      */
     fun disconnect() {
-        shellSession.destroy()
-
-        adb(false, listOf("kill-server")).let {
-            if (!it.waitFor(5, TimeUnit.SECONDS))
-                it.destroyForcibly()
-        }
-
+        manualDisconnect = true
         setState(ShellSessionState.IDLE)
         _running.postValue(false)
+
+        Thread {
+            shellSession.destroy()
+
+            adb(false, listOf("kill-server")).let {
+                if (!it.waitFor(5, TimeUnit.SECONDS))
+                    it.destroyForcibly()
+            }
+        }.apply { isDaemon = true }.start()
     }
 
     /**
