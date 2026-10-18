@@ -75,7 +75,9 @@ class BookmarksRecyclerAdapter(private val settings: SettingsRepository) :
     fun snapshot(): List<String> = list.toList()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
-        updateList(false)
+        /* The list lives in memory and is refreshed by explicit mutations;
+           re-reading DataStore here would block the main thread while
+           scrolling. */
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.recycler_item, parent, false)
         return ViewHolder(view)

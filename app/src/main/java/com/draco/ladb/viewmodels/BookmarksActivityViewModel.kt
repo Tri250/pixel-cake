@@ -3,13 +3,13 @@ package com.draco.ladb.viewmodels
 import android.app.Application
 import android.content.Context
 import android.widget.EditText
-import androidx.appcompat.app.AlertDialog
 import androidx.lifecycle.AndroidViewModel
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.draco.ladb.R
 import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.recyclers.BookmarksRecyclerAdapter
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 class BookmarksActivityViewModel(application: Application) : AndroidViewModel(application) {
     val recyclerAdapter = BookmarksRecyclerAdapter(
@@ -32,7 +32,7 @@ class BookmarksActivityViewModel(application: Application) : AndroidViewModel(ap
             .also {
                 it.setText(initialText)
             }
-        AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder(context)
             .setTitle(R.string.add)
             .setView(editText)
             .setPositiveButton(R.string.done) { _, _ ->
@@ -47,7 +47,7 @@ class BookmarksActivityViewModel(application: Application) : AndroidViewModel(ap
     fun edit(context: Context, text: String) {
         val editText = EditText(context)
             .also { it.setText(text) }
-        AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder(context)
             .setTitle(R.string.edit)
             .setView(editText)
             .setPositiveButton(R.string.done) { _, _ ->
@@ -60,7 +60,7 @@ class BookmarksActivityViewModel(application: Application) : AndroidViewModel(ap
     }
 
     fun areYouSure(context: Context, callback: () -> Unit) {
-        AlertDialog.Builder(context)
+        MaterialAlertDialogBuilder(context)
             .setTitle(R.string.delete)
             .setMessage(R.string.delete_confirm)
             .setPositiveButton(R.string.delete) { _, _ -> callback() }
