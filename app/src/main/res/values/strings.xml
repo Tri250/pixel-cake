@@ -23,13 +23,14 @@
 
     <string name="snackbar_intent_failed">Intent failed to start</string>
 
-    <string name="developer_url">https://www.github.com/tytydraco</string>
-    <string name="source_url">https://www.github.com/tytydraco/LADB</string>
-    <string name="contact_url">mailto:tnnijmeh@gmail.com</string>
-    <string name="tutorial_url">https://www.xda-developers.com/debloat-your-phone-run-adb-shell-commands-no-root-no-pc
+    <string name="developer_url" translatable="false">https://www.github.com/tytydraco</string>
+    <string name="source_url" translatable="false">https://www.github.com/tytydraco/LADB</string>
+    <string name="contact_url" translatable="false">mailto:tnnijmeh@gmail.com</string>
+    <string name="tutorial_url" translatable="false">https://www.xda-developers.com/debloat-your-phone-run-adb-shell-commands-no-root-no-pc
     </string>
 
-    <string name="paired_key">paired</string>
+    <!-- Preference keys must never be translated. -->
+    <string name="paired_key" translatable="false">paired</string>
     <string name="port_hint">Port</string>
 
     <string name="code_hint">Pairing code</string>
@@ -46,31 +47,31 @@
 
     <string name="unpair_title">Unpair</string>
     <string name="unpair_summary">Erasing any existing pairing information.</string>
-    <string name="unpair_key">unpair</string>
+    <string name="unpair_key" translatable="false">unpair</string>
 
     <string name="restart_title">Restart</string>
     <string name="restart_summary">Restart the ADB server to apply changed settings</string>
-    <string name="restart_key">restart</string>
+    <string name="restart_key" translatable="false">restart</string>
 
     <string name="auto_shell_title">Pair &amp; shell</string>
     <string name="auto_shell_summary">Automatically enter an ADB shell; disable to enter a regular, non-adb shell
         without pairing
     </string>
-    <string name="auto_shell_key">auto_shell</string>
+    <string name="auto_shell_key" translatable="false">auto_shell</string>
 
     <string name="buffer_size_title">Buffer size</string>
     <string name="buffer_size_summary">The size of the screen output buffer. Increasing this value will show more output
         on the screen at once at the cost of performance. (Default: 16384)
     </string>
-    <string name="buffer_size_key">buffer_size</string>
+    <string name="buffer_size_key" translatable="false">buffer_size</string>
 
     <string name="startup_command_title">Startup command</string>
     <string name="startup_command_summary">The command to run once the shell has begun</string>
-    <string name="startup_command_key">startup_command</string>
+    <string name="startup_command_key" translatable="false">startup_command</string>
 
     <string name="tutorial_title">Tutorial</string>
     <string name="tutorial_summary">View the tutorial from the XDA Developers page</string>
-    <string name="tutorial_key">tutorial</string>
+    <string name="tutorial_key" translatable="false">tutorial</string>
 
     <string name="error_waiting_title">Stuck on \"Waiting\"</string>
     <string name="error_waiting_summary">Either you entered the pairing information incorrectly, or your device is not
@@ -86,19 +87,19 @@
 
     <string name="developer_title">Developer</string>
     <string name="developer_summary">Tyler Nijmeh</string>
-    <string name="developer_key">developer</string>
+    <string name="developer_key" translatable="false">developer</string>
 
     <string name="source_title">Source code</string>
     <string name="source_summary">View the source code on GitHub</string>
-    <string name="source_key">source</string>
+    <string name="source_key" translatable="false">source</string>
 
     <string name="contact_title">Contact</string>
     <string name="contact_summary">Email me for assistance</string>
-    <string name="contact_key">contact</string>
+    <string name="contact_key" translatable="false">contact</string>
 
     <string name="licenses_title">Licenses</string>
     <string name="licenses_summary">View the open source licenses</string>
-    <string name="licenses_key">licenses</string>
+    <string name="licenses_key" translatable="false">licenses</string>
 
     <string name="pref_key_verified" translatable="false">verified</string>
 </resources>

@@ -9,9 +9,12 @@ import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
+import androidx.core.content.edit
 import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.R
+import com.draco.ladb.domain.DeviceSelector
+import com.draco.ladb.domain.ShellSessionState
 import java.io.BufferedReader
 import java.io.File
 import java.io.PrintStream
@@ -22,6 +25,7 @@ class ADB(private val context: Context) {
     companion object {
         const val MAX_OUTPUT_BUFFER_SIZE = 1024 * 16
         const val OUTPUT_BUFFER_DELAY_MS = 100L
+        private const val PREF_LAST_ADB_PORT = "last_adb_port"
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -41,6 +45,16 @@ class ADB(private val context: Context) {
      */
     private val _running = MutableLiveData(false)
     val running: LiveData<Boolean> = _running
+
+    /**
+     * Observability: explicit shell session lifecycle state
+     */
+    private val _state = MutableLiveData(ShellSessionState.IDLE)
+    val state: LiveData<ShellSessionState> = _state
+
+    private fun setState(value: ShellSessionState) {
+        _state.postValue(value)
+    }
 
     private var tryingToPair = false
 
@@ -79,7 +93,8 @@ class ADB(private val context: Context) {
      */
     fun getDevices(): List<String> {
         val devicesProcess = adb(false, listOf("devices"))
-        devicesProcess.waitFor()
+        if (!devicesProcess.waitFor(10, TimeUnit.SECONDS))
+            devicesProcess.destroyForcibly()
 
         /* Get result of the command. */
         val linesRaw = BufferedReader(devicesProcess.inputStream.reader()).readLines()
@@ -121,95 +136,108 @@ class ADB(private val context: Context) {
             context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
 
         if (autoShell) {
-            /* Only do wireless debugging steps on compatible versions */
-            if (secureSettingsGranted) {
-                disableMobileDataAlwaysOn()
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                    cycleWirelessDebugging()
-                } else if (!isUSBDebuggingEnabled()) {
-                    debug("Turning on USB debugging...")
-                    Settings.Global.putInt(
-                        context.contentResolver,
-                        Settings.Global.ADB_ENABLED,
-                        1
-                    )
-
-                    Thread.sleep(5_000)
-                }
-            }
-
-            /* Check again... */
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                if (!isWirelessDebuggingEnabled()) {
-                    debug("Wireless debugging is not enabled!")
-                    debug("Settings -> Developer options -> Wireless debugging")
-                    debug("Waiting for wireless debugging...")
-
-                    while (!isWirelessDebuggingEnabled()) {
-                        Thread.sleep(1_000)
-                    }
-                }
+            if (tryConnectCachedPort()) {
+                /* Previous connection still valid; skip discovery entirely. */
+                debug("Reusing previous connection...")
             } else {
-                if (!isUSBDebuggingEnabled()) {
-                    debug("USB debugging is not enabled!")
-                    debug("Settings -> Developer options -> USB debugging")
-                    debug("Waiting for USB debugging...")
+                /* Only do wireless debugging steps on compatible versions */
+                if (secureSettingsGranted) {
+                    disableMobileDataAlwaysOn()
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                        cycleWirelessDebugging()
+                    } else if (!isUSBDebuggingEnabled()) {
+                        debug("Turning on USB debugging...")
+                        Settings.Global.putInt(
+                            context.contentResolver,
+                            Settings.Global.ADB_ENABLED,
+                            1
+                        )
 
-                    while (!isUSBDebuggingEnabled()) {
-                        Thread.sleep(1_000)
+                        Thread.sleep(5_000)
                     }
                 }
-            }
 
-            val nowTime = System.currentTimeMillis()
-            val maxTimeoutTime = nowTime + 10.seconds.inWholeMilliseconds
-            val minDnsScanTime = (DnsDiscover.aliveTime ?: nowTime) + 3.seconds.inWholeMilliseconds
-            while (true) {
+                /* Check again... */
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+                    if (!isWirelessDebuggingEnabled()) {
+                        debug("Wireless debugging is not enabled!")
+                        debug("Settings -> Developer options -> Wireless debugging")
+                        debug("Waiting for wireless debugging...")
+
+                        while (!isWirelessDebuggingEnabled()) {
+                            Thread.sleep(1_000)
+                        }
+                    }
+                } else {
+                    if (!isUSBDebuggingEnabled()) {
+                        debug("USB debugging is not enabled!")
+                        debug("Settings -> Developer options -> USB debugging")
+                        debug("Waiting for USB debugging...")
+
+                        while (!isUSBDebuggingEnabled()) {
+                            Thread.sleep(1_000)
+                        }
+                    }
+                }
+
+                setState(ShellSessionState.DISCOVERING)
+
                 val nowTime = System.currentTimeMillis()
-                val pendingResolves = DnsDiscover.pendingResolves.get()
+                val maxTimeoutTime = nowTime + 10.seconds.inWholeMilliseconds
+                val minDnsScanTime = (DnsDiscover.aliveTime ?: nowTime) + 3.seconds.inWholeMilliseconds
+                while (true) {
+                    val nowTime = System.currentTimeMillis()
+                    val pendingResolves = DnsDiscover.pendingResolves.get()
 
-                // Wait for pending DNS resolves to finish and the minimum scan time to elapse...
-                if (nowTime >= minDnsScanTime && !pendingResolves) {
-                    debug("DNS resolver done...")
-                    break
+                    // Wait for pending DNS resolves to finish and the minimum scan time to elapse...
+                    if (nowTime >= minDnsScanTime && !pendingResolves) {
+                        debug("DNS resolver done...")
+                        break
+                    }
+
+                    // Or if 10 seconds pass...
+                    if (nowTime >= maxTimeoutTime) {
+                        debug("DNS resolver took too long! Skipping...")
+                        break
+                    }
+
+                    debug("Awaiting DNS resolver...")
+
+                    Thread.sleep(1_000)
                 }
 
-                // Or if 10 seconds pass...
-                if (nowTime >= maxTimeoutTime) {
-                    debug("DNS resolver took too long! Skipping...")
-                    break
+                val adbPort = DnsDiscover.adbPort
+                if (adbPort != null)
+                    debug("Best ADB port discovered: $adbPort")
+                else
+                    debug("No ADB port discovered, fallback...")
+
+                setState(ShellSessionState.CONNECTING)
+
+                debug("Starting ADB server...")
+                adb(false, listOf("start-server")).waitFor(1, TimeUnit.MINUTES)
+
+                val waitProcess = if (adbPort != null)
+                    adb(false, listOf("connect", "localhost:$adbPort")).waitFor(1, TimeUnit.MINUTES)
+                else
+                    adb(false, listOf("wait-for-device")).waitFor(1, TimeUnit.MINUTES)
+
+                if (!waitProcess) {
+                    debug("Your device didn't connect to LADB")
+                    debug("If a reboot doesn't work, please contact support")
+
+                    if (isMobileDataAlwaysOnEnabled()) {
+                        debug("Please disable 'Mobile data always on' in Developer Settings!")
+                        Thread.sleep(5_000)
+                    }
+
+                    tryingToPair = false
+                    return false
                 }
 
-                debug("Awaiting DNS resolver...")
-
-                Thread.sleep(1_000)
-            }
-
-            val adbPort = DnsDiscover.adbPort
-            if (adbPort != null)
-                debug("Best ADB port discovered: $adbPort")
-            else
-                debug("No ADB port discovered, fallback...")
-
-            debug("Starting ADB server...")
-            adb(false, listOf("start-server")).waitFor(1, TimeUnit.MINUTES)
-
-            val waitProcess = if (adbPort != null)
-                adb(false, listOf("connect", "localhost:$adbPort")).waitFor(1, TimeUnit.MINUTES)
-            else
-                adb(false, listOf("wait-for-device")).waitFor(1, TimeUnit.MINUTES)
-
-            if (!waitProcess) {
-                debug("Your device didn't connect to LADB")
-                debug("If a reboot doesn't work, please contact support")
-
-                if (isMobileDataAlwaysOnEnabled()) {
-                    debug("Please disable 'Mobile data always on' in Developer Settings!")
-                    Thread.sleep(5_000)
-                }
-
-                tryingToPair = false
-                return false
+                /* Remember the working port to speed up the next startup. */
+                if (adbPort != null)
+                    saveCachedPort(adbPort)
             }
         }
 
@@ -222,37 +250,11 @@ class ADB(private val context: Context) {
             /* Uh oh, multiple possible devices... */
             if (deviceList.size > 1) {
                 Log.w("DEVICES", "Multiple devices detected...")
-                val localDevices = deviceList.filter { it ->
-                    it.contains("localhost")
-                }
 
-                /* Choose the first local device (hopefully the only). */
-                if (localDevices.isNotEmpty()) {
-                    val serialId = localDevices.first()
-                    Log.w("DEVICES", "Choosing first local device: $serialId")
-                    argList = listOf("-s", serialId, "shell")
-                } else {
-                    /*
-                     * If no local devices to use, try to filter out
-                     * any emulator devices and choose the first remaining result.
-                     */
-
-                    val nonEmulators = deviceList.filterNot { it ->
-                        it.contains("emulator")
-                    }
-
-                    /* Choose the first non emulator device (hopefully the only). */
-                    if (nonEmulators.isNotEmpty()) {
-                        val serialId = nonEmulators.first()
-                        Log.w("DEVICES", "Choosing first non-emulator device: $serialId")
-                        argList = listOf("-s", serialId, "shell")
-                    } else {
-                        /* Otherwise, we're screwed, just choose the first device. */
-                        val serialId = deviceList.first()
-                        Log.w("DEVICES", "Choosing first unrecognized device: $serialId")
-                        argList = listOf("-s", serialId, "shell")
-                    }
-                }
+                /* Choose the best candidate (local -> non-emulator -> first). */
+                val serialId = DeviceSelector.selectSerial(deviceList)!!
+                Log.w("DEVICES", "Choosing device: $serialId")
+                argList = listOf("-s", serialId, "shell")
             }
 
             adb(true, argList)
@@ -276,10 +278,40 @@ class ADB(private val context: Context) {
         if (startupCommand.isNotEmpty())
             sendToShellProcess(startupCommand)
 
+        setState(ShellSessionState.READY)
         _running.postValue(true)
         tryingToPair = false
 
         return true
+    }
+
+    /**
+     * Attempt to reconnect using the previously successful port, skipping
+     * the slower wireless-debugging discovery path.
+     */
+    private fun tryConnectCachedPort(): Boolean {
+        val lastPort = sharedPrefs.getString(PREF_LAST_ADB_PORT, null) ?: return false
+
+        debug("Trying cached ADB port $lastPort...")
+        adb(false, listOf("start-server")).waitFor(1, TimeUnit.MINUTES)
+        adb(false, listOf("connect", "localhost:$lastPort")).waitFor(15, TimeUnit.SECONDS)
+
+        val connected = getDevices().any { it.contains("localhost") }
+        if (!connected) {
+            debug("Cached port no longer valid, falling back to discovery...")
+            return false
+        }
+
+        return true
+    }
+
+    /**
+     * Persist the working ADB port for fast reconnects.
+     */
+    private fun saveCachedPort(port: Int) {
+        sharedPrefs.edit {
+            putString(PREF_LAST_ADB_PORT, port.toString())
+        }
     }
 
     private fun isWirelessDebuggingEnabled() =
@@ -370,12 +402,20 @@ class ADB(private val context: Context) {
     fun waitForDeathAndReset() {
         while (true) {
             /* Do not falsely claim the shell is dead if we haven't even initialized it yet */
-            if (tryingToPair) continue
+            if (tryingToPair) {
+                /* Avoid busy-waiting while pairing is in progress */
+                Thread.sleep(1_000)
+                continue
+            }
 
             shellProcess?.waitFor()
+            setState(ShellSessionState.DEAD)
             _running.postValue(false)
             debug("Shell is dead, resetting...")
-            adb(false, listOf("kill-server")).waitFor()
+            adb(false, listOf("kill-server")).let {
+                if (!it.waitFor(5, TimeUnit.SECONDS))
+                    it.destroyForcibly()
+            }
 
             Thread.sleep(3_000)
             initServer()
@@ -386,6 +426,7 @@ class ADB(private val context: Context) {
      * Ask the device to pair on Android 11+ devices
      */
     fun pair(port: String, pairingCode: String): Boolean {
+        setState(ShellSessionState.PAIRING)
         val pairShell = adb(false, listOf("pair", "localhost:$port"))
 
         /* Sleep to allow shell to catch up */

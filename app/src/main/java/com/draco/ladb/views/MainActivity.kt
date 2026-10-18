@@ -23,6 +23,7 @@ import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.R
 import com.draco.ladb.databinding.ActivityMainBinding
+import com.draco.ladb.domain.CommandHistory
 import com.draco.ladb.viewmodels.MainActivityViewModel
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
@@ -38,6 +39,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var pairDialog: MaterialAlertDialogBuilder
 
     private var lastCommand = ""
+
+    private val history = CommandHistory()
+    private var historyIndex = -1
+    private var historyDraft = ""
+
+    private companion object {
+        const val HISTORY_KEY = "command_history"
+    }
 
     private var bookmarkGetResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         val text = it.data?.getStringExtra(Intent.EXTRA_TEXT) ?: return@registerForActivityResult
@@ -76,11 +85,23 @@ class MainActivity : AppCompatActivity() {
             .setNeutralButton(R.string.skip, null)
 
         binding.command.setOnKeyListener { _, keyCode, keyEvent ->
-            if (keyCode == KeyEvent.KEYCODE_ENTER && keyEvent.action == KeyEvent.ACTION_DOWN) {
-                sendCommandToADB()
-                return@setOnKeyListener true
-            } else {
+            if (keyEvent.action != KeyEvent.ACTION_DOWN)
                 return@setOnKeyListener false
+
+            when (keyCode) {
+                KeyEvent.KEYCODE_ENTER -> {
+                    sendCommandToADB()
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    browseHistory(-1)
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    browseHistory(1)
+                    true
+                }
+                else -> false
             }
         }
 
@@ -97,10 +118,41 @@ class MainActivity : AppCompatActivity() {
     private fun sendCommandToADB() {
         val text = binding.command.text.toString()
         lastCommand = text
+
+        if (text.isNotBlank()) {
+            history.record(text)
+            PreferenceManager.getDefaultSharedPreferences(this).edit {
+                putString(HISTORY_KEY, history.serialize())
+            }
+        }
+
+        historyIndex = -1
+        historyDraft = ""
         binding.command.text = null
         lifecycleScope.launch(Dispatchers.IO) {
             viewModel.adb.sendToShellProcess(text)
         }
+    }
+
+    /**
+     * Recall older (step = -1) or newer (step = 1) commands with the
+     * arrow keys. The in-progress draft is preserved while browsing.
+     */
+    private fun browseHistory(step: Int): Boolean {
+        if (history.isEmpty())
+            return false
+
+        val entries = history.all()
+        if (historyIndex == -1) {
+            historyIndex = entries.size
+            historyDraft = binding.command.text.toString()
+        }
+
+        historyIndex = (historyIndex + step).coerceIn(0, entries.size)
+        val text = if (historyIndex == entries.size) historyDraft else entries[historyIndex]
+        binding.command.setText(text)
+        binding.command.setSelection(text.length)
+        return true
     }
 
     private fun setReadyForInput(ready: Boolean) {
@@ -164,6 +216,10 @@ class MainActivity : AppCompatActivity() {
 
         setupUI()
         setupDataListeners()
+
+        history.load(
+            PreferenceManager.getDefaultSharedPreferences(this).getString(HISTORY_KEY, null)
+        )
 
         /* Ensure we are not running this a second time around */
         if (viewModel.viewModelHasStartedADB.value != true) {

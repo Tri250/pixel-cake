@@ -1,0 +1,72 @@
+<resources>
+    <string name="app_name">LADB</string>
+
+    <string name="command_hint">Shell 命令</string>
+    <string name="command_hint_waiting">等待连接…</string>
+
+    <string name="bookmarks">书签</string>
+    <string name="last_command">上一条命令</string>
+    <string name="help">帮助</string>
+    <string name="more">更多</string>
+    <string name="share">分享</string>
+    <string name="clear">清屏</string>
+    <string name="add">添加</string>
+    <string name="delete">删除</string>
+    <string name="edit">编辑</string>
+    <string name="cancel">取消</string>
+    <string name="done">完成</string>
+    <string name="pair">配对</string>
+    <string name="skip">跳过</string>
+    <string name="dismiss">关闭</string>
+
+    <string name="delete_confirm">确定要删除这一项吗？</string>
+
+    <string name="snackbar_intent_failed">无法打开链接</string>
+
+    <string name="port_hint">端口</string>
+
+    <string name="code_hint">配对码</string>
+
+    <string name="pair_title">配对信息</string>
+    <string name="pair_message">必须使用“开发者选项”中“无线调试”页面提供的配对码，将本设备连接到 LADB。如果你从未操作过，请点击“帮助”查看教程。</string>
+
+    <string name="settings">设置</string>
+    <string name="troubleshooting">故障排除</string>
+    <string name="about">关于</string>
+
+    <string name="unpair_title">解除配对</string>
+    <string name="unpair_summary">清除现有的配对信息。</string>
+
+    <string name="restart_title">重启</string>
+    <string name="restart_summary">重启 ADB 服务器以应用更改的设置</string>
+
+    <string name="auto_shell_title">配对并进入 Shell</string>
+    <string name="auto_shell_summary">自动进入 ADB shell；关闭后无需配对，直接进入普通的非 ADB shell</string>
+
+    <string name="buffer_size_title">缓冲区大小</string>
+    <string name="buffer_size_summary">屏幕输出缓冲区的大小。增大此值可以一次性显示更多输出，但会降低性能。（默认：16384）</string>
+
+    <string name="startup_command_title">启动命令</string>
+    <string name="startup_command_summary">shell 启动后自动执行的命令</string>
+
+    <string name="tutorial_title">教程</string>
+    <string name="tutorial_summary">查看 XDA Developers 页面上的教程</string>
+
+    <string name="error_waiting_title">卡在“等待连接”</string>
+    <string name="error_waiting_summary">可能是配对信息输入有误，或未检测到你的设备。请先确认“无线调试”确实已开启。如果仍然无效，请尝试 LADB 中的“恢复出厂设置”重新配对。</string>
+
+    <string name="error_no_wireless_debugging_title">没有“无线调试”开关</string>
+    <string name="error_no_wireless_debugging_summary">你的设备原生不支持 LADB 所需的无线调试功能。你也可以用电脑开启该功能（即使设备不受支持也可以），有效期持续到下次重启。将设备连接到电脑并输入：adb tcpip 5555</string>
+
+    <string name="developer_title">开发者</string>
+    <string name="developer_summary">Tyler Nijmeh</string>
+
+    <string name="source_title">源代码</string>
+    <string name="source_summary">在 GitHub 上查看源代码</string>
+
+    <string name="contact_title">联系我们</string>
+    <string name="contact_summary">发送邮件获取帮助</string>
+
+    <string name="licenses_title">许可协议</string>
+    <string name="licenses_summary">查看开源许可协议</string>
+</resources>
