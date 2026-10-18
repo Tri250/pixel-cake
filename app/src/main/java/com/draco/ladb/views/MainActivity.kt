@@ -5,7 +5,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.view.*
 import android.view.inputmethod.EditorInfo
-import android.view.inputmethod.InputMethodManager
 import android.widget.ScrollView
 import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
@@ -167,8 +166,6 @@ class MainActivity : AppCompatActivity() {
             binding.outputScrollview.post {
                 binding.outputScrollview.fullScroll(ScrollView.FOCUS_DOWN)
                 binding.command.requestFocus()
-                val imm = getSystemService(INPUT_METHOD_SERVICE) as InputMethodManager
-                imm.showSoftInput(binding.command, InputMethodManager.SHOW_FORCED)
             }
         }
 

@@ -48,6 +48,9 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     val viewModelHasStartedADB: LiveData<Boolean> = _viewModelHasStartedADB
 
     init {
+        /* Apply the strict IP filter before the very first scan starts */
+        dnsDiscover.strictIpCheck = settings.blockingStrictIpCheck()
+
         startOutputThread()
         dnsDiscover.scanAdbPorts()
     }
@@ -126,14 +129,18 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
      * Erase all shell text
      */
     fun clearOutputText() {
-        adb.outputBufferFile.writeText("")
+        synchronized(adb.outputBufferFile) {
+            adb.outputBufferFile.writeText("")
+        }
     }
 
     /**
      * Check if the user should be prompted to pair
      */
     fun needsToPair(): Boolean =
-        !settings.blockingPaired() && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
+        settings.blockingAutoShell() &&
+            !settings.blockingPaired() &&
+            (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
 
     fun setPairedBefore(value: Boolean) {
         viewModelScope.launch {
@@ -147,27 +154,37 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     suspend fun saveDeviceProfile(port: String) = settings.saveDeviceProfile(port)
 
     /**
-     * Read the content of the ABD output file
+     * Read the content of the ADB output file
      */
     private fun readOutputFile(file: File): String {
-        val out = ByteArray(adb.getOutputBufferSize())
+        try {
+            synchronized(file) {
+                if (!file.exists())
+                    return ""
 
-        synchronized(file) {
-            if (!file.exists())
-                return ""
+                file.inputStream().use {
+                    val size = it.channel.size()
+                    val capacity = adb.getOutputBufferSize()
 
-            file.inputStream().use {
-                val size = it.channel.size()
+                    if (size <= capacity)
+                        return String(it.readBytes())
 
-                if (size <= out.size)
-                    return String(it.readBytes())
-
-                val newPos = (it.channel.size() - out.size)
-                it.channel.position(newPos)
-                it.read(out)
+                    it.channel.position(size - capacity)
+                    val out = ByteArray(capacity)
+                    var offset = 0
+                    while (offset < capacity) {
+                        val read = it.read(out, offset, capacity - offset)
+                        if (read < 0)
+                            break
+                        offset += read
+                    }
+                    return String(out, 0, offset)
+                }
             }
+        } catch (_: Exception) {
+            /* Truncated mid-read (e.g. by clearOutputText); the next cycle
+               will pick up a consistent snapshot. */
+            return ""
         }
-
-        return String(out)
     }
 }
