@@ -4,9 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import androidx.core.content.edit
 import androidx.preference.*
 import com.draco.ladb.R
+import com.draco.ladb.data.SettingsPreferenceDataStore
+import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.utils.ADB
 import com.draco.ladb.views.MainActivity
 import com.google.android.gms.oss.licenses.OssLicensesMenuActivity
@@ -23,6 +24,10 @@ class HelpPreferenceFragment : PreferenceFragmentCompat() {
     }
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
+        /* Persist all preference changes to DataStore */
+        preferenceManager.preferenceDataStore = SettingsPreferenceDataStore(
+            SettingsRepository.getInstance(requireContext().applicationContext)
+        )
         setPreferencesFromResource(R.xml.help, rootKey)
     }
 
@@ -37,9 +42,7 @@ class HelpPreferenceFragment : PreferenceFragmentCompat() {
         when (preference.key) {
             getString(R.string.unpair_key) -> {
                 val context = requireContext()
-                PreferenceManager.getDefaultSharedPreferences(context).edit(commit = true) {
-                    putBoolean(context.getString(R.string.paired_key), false)
-                }
+                SettingsRepository.getInstance(context.applicationContext).setPairedBlocking(false)
                 restartApp()
             }
 

@@ -25,6 +25,13 @@ class DnsDiscover private constructor(
 
     private var pendingServices: MutableList<NsdServiceInfo> = Collections.synchronizedList(ArrayList())
 
+    /**
+     * When true, services announced from a different IP address are ignored.
+     * Disabled by default for TV and multi-NAT compatibility.
+     */
+    @Volatile
+    var strictIpCheck: Boolean = false
+
     companion object {
         private var instance: DnsDiscover? = null
         var adbPort: Int? = null
@@ -174,8 +181,11 @@ class DnsDiscover private constructor(
 
         val discoveredAddress = serviceInfo.host.hostAddress
         if (ipAddress != null && discoveredAddress != ipAddress) {
+            if (strictIpCheck) {
+                Log.d(TAG, "IP does not match device, skipping (strict IP check)...")
+                return
+            }
             Log.d(TAG, "IP does not match device, but not skipping...")
-            //return
         }
 
         if (serviceInfo.port == 0) {

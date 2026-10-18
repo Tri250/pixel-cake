@@ -43,6 +43,13 @@ class CommandHistory(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
     fun isEmpty(): Boolean = entries.isEmpty()
 
+    /**
+     * Remove every recorded command
+     */
+    fun clear() {
+        entries.clear()
+    }
+
     fun serialize(): String = entries.joinToString("\n")
 
     companion object {

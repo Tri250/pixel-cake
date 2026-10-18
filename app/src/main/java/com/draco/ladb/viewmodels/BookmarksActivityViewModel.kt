@@ -8,10 +8,13 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.draco.ladb.R
+import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.recyclers.BookmarksRecyclerAdapter
 
-class BookmarksActivityViewModel(application: Application): AndroidViewModel(application) {
-    val recyclerAdapter = BookmarksRecyclerAdapter(application.applicationContext)
+class BookmarksActivityViewModel(application: Application) : AndroidViewModel(application) {
+    val recyclerAdapter = BookmarksRecyclerAdapter(
+        SettingsRepository.getInstance(application.applicationContext)
+    )
 
     /**
      * Prepare the recycler view
@@ -63,5 +66,12 @@ class BookmarksActivityViewModel(application: Application): AndroidViewModel(app
             .setPositiveButton(R.string.delete) { _, _ -> callback() }
             .setNegativeButton(R.string.cancel, null)
             .show()
+    }
+
+    /**
+     * Replace all bookmarks with the imported entries
+     */
+    fun importBookmarks(entries: List<String>) {
+        recyclerAdapter.replaceAll(entries)
     }
 }

@@ -30,7 +30,6 @@
     </string>
 
     <!-- Preference keys must never be translated. -->
-    <string name="paired_key" translatable="false">paired</string>
     <string name="port_hint">Port</string>
 
     <string name="code_hint">Pairing code</string>
@@ -102,4 +101,43 @@
     <string name="licenses_key" translatable="false">licenses</string>
 
     <string name="pref_key_verified" translatable="false">verified</string>
+
+    <string name="history">Command history</string>
+    <string name="clear_history">Clear history</string>
+
+    <string name="pair_guide">1. Open Settings → Developer options → Wireless debugging\n2. Tap “Pair device with pairing code”\n3. Enter the port and pairing code below</string>
+    <string name="pair_error_invalid">Please enter a port and pairing code</string>
+    <string name="pair_error_failed">Pairing failed. Double-check the port and code, then try again</string>
+
+    <string name="import_bookmarks">Import</string>
+    <string name="export_bookmarks">Export</string>
+    <string name="import_success">Bookmarks imported</string>
+    <string name="import_failed">Import failed: invalid file</string>
+    <string name="export_success">Bookmarks exported</string>
+    <string name="export_failed">Export failed</string>
+
+    <string name="shortcut_terminal">Open terminal</string>
+    <string name="shortcut_bookmarks">Bookmarks</string>
+
+    <string name="tile_connected">Connected</string>
+    <string name="tile_disconnected">Tap to connect</string>
+
+    <string name="theme_title">Theme</string>
+    <string name="theme_summary">App color scheme (applies after restart)</string>
+    <string name="theme_key" translatable="false">theme</string>
+    <string name="theme_system">Follow system</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+
+    <string name="font_size_title">Font size</string>
+    <string name="font_size_summary">Terminal output font size in sp (Default: 14)</string>
+    <string name="font_size_key" translatable="false">font_size</string>
+
+    <string name="keep_screen_on_title">Keep screen on</string>
+    <string name="keep_screen_on_summary">Prevent the screen from sleeping while LADB is open</string>
+    <string name="keep_screen_on_key" translatable="false">keep_screen_on</string>
+
+    <string name="strict_ip_check_title">Strict IP check</string>
+    <string name="strict_ip_check_summary">Only accept discovered devices matching this device IP address. Disable if discovery finds nothing</string>
+    <string name="strict_ip_check_key" translatable="false">strict_ip_check</string>
 </resources>

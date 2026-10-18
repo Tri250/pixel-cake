@@ -30,6 +30,32 @@
             android:key="@string/startup_command_key"
             android:summary="@string/startup_command_summary"
             android:title="@string/startup_command_title" />
+        <ListPreference
+            android:defaultValue="system"
+            android:entries="@array/theme_entries"
+            android:entryValues="@array/theme_values"
+            android:icon="@drawable/ic_baseline_home_repair_service_24"
+            android:key="@string/theme_key"
+            android:summary="@string/theme_summary"
+            android:title="@string/theme_title" />
+        <EditTextPreference
+            android:defaultValue="14"
+            android:icon="@drawable/ic_baseline_home_repair_service_24"
+            android:key="@string/font_size_key"
+            android:summary="@string/font_size_summary"
+            android:title="@string/font_size_title" />
+        <SwitchPreference
+            android:defaultValue="false"
+            android:icon="@drawable/ic_baseline_home_repair_service_24"
+            android:key="@string/keep_screen_on_key"
+            android:summary="@string/keep_screen_on_summary"
+            android:title="@string/keep_screen_on_title" />
+        <SwitchPreference
+            android:defaultValue="false"
+            android:icon="@drawable/ic_baseline_home_repair_service_24"
+            android:key="@string/strict_ip_check_key"
+            android:summary="@string/strict_ip_check_summary"
+            android:title="@string/strict_ip_check_title" />
     </PreferenceCategory>
     <PreferenceCategory android:title="@string/troubleshooting">
         <Preference

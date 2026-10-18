@@ -12,8 +12,9 @@ import androidx.lifecycle.MutableLiveData
 import androidx.core.content.edit
 import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
-import com.draco.ladb.R
+import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.domain.DeviceSelector
+import com.draco.ladb.domain.ShellSession
 import com.draco.ladb.domain.ShellSessionState
 import java.io.BufferedReader
 import java.io.File
@@ -26,6 +27,7 @@ class ADB(private val context: Context) {
         const val MAX_OUTPUT_BUFFER_SIZE = 1024 * 16
         const val OUTPUT_BUFFER_DELAY_MS = 100L
         private const val PREF_LAST_ADB_PORT = "last_adb_port"
+        private const val PREF_QS_CONNECTED = "qs_connected"
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
@@ -54,6 +56,11 @@ class ADB(private val context: Context) {
 
     private fun setState(value: ShellSessionState) {
         _state.postValue(value)
+
+        /* Mirror the connection state for the quick settings tile */
+        sharedPrefs.edit {
+            putBoolean(PREF_QS_CONNECTED, value == ShellSessionState.READY)
+        }
     }
 
     private var tryingToPair = false
@@ -64,6 +71,8 @@ class ADB(private val context: Context) {
     private val _closed = MutableLiveData(false)
     val closed: LiveData<Boolean> = _closed
 
+    private val settings = SettingsRepository.getInstance(context)
+
     /**
      * Where shell output is stored
      */
@@ -72,15 +81,20 @@ class ADB(private val context: Context) {
     }
 
     /**
-     * Single shell instance where we can pipe commands to
+     * The interactive shell process (lifecycle owned by ShellSession)
      */
-    private var shellProcess: Process? = null
+    private val shellSession = ShellSession(
+        workingDir = context.filesDir,
+        homeDir = context.filesDir.path,
+        tmpDir = context.cacheDir.path,
+        outputBufferFile = outputBufferFile
+    )
 
     /**
      * Returns the user buffer size if valid, else the default
      */
     fun getOutputBufferSize(): Int {
-        val userValue = sharedPrefs.getString(context.getString(R.string.buffer_size_key), "16384")!!
+        val userValue = settings.blockingBufferSize()
         return try {
             Integer.parseInt(userValue)
         } catch (_: NumberFormatException) {
@@ -130,7 +144,7 @@ class ADB(private val context: Context) {
 
         tryingToPair = true
 
-        val autoShell = sharedPrefs.getBoolean(context.getString(R.string.auto_shell_key), true)
+        val autoShell = settings.blockingAutoShell()
 
         val secureSettingsGranted =
             context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
@@ -244,9 +258,7 @@ class ADB(private val context: Context) {
         val deviceList = getDevices()
         Log.d("DEVICES", "Devices: $deviceList")
 
-        shellProcess = if (autoShell) {
-            var argList = listOf("shell")
-
+        val argList = if (autoShell) {
             /* Uh oh, multiple possible devices... */
             if (deviceList.size > 1) {
                 Log.w("DEVICES", "Multiple devices detected...")
@@ -254,13 +266,15 @@ class ADB(private val context: Context) {
                 /* Choose the best candidate (local -> non-emulator -> first). */
                 val serialId = DeviceSelector.selectSerial(deviceList)!!
                 Log.w("DEVICES", "Choosing device: $serialId")
-                argList = listOf("-s", serialId, "shell")
+                listOf("-s", serialId, "shell")
+            } else {
+                listOf("shell")
             }
-
-            adb(true, argList)
         } else {
-            shell(true, listOf("sh", "-l"))
+            listOf("sh", "-l")
         }
+
+        shellSession.start(listOf(adbPath) + argList, redirect = true)
 
         sendToShellProcess("alias adb=\"$adbPath\"")
 
@@ -273,8 +287,7 @@ class ADB(private val context: Context) {
         else
             sendToShellProcess("echo 'Entered non-adb shell'")
 
-        val startupCommand =
-            sharedPrefs.getString(context.getString(R.string.startup_command_key), "echo 'Success! ※\\(^o^)/※'")!!
+        val startupCommand = settings.blockingStartupCommand()
         if (startupCommand.isNotEmpty())
             sendToShellProcess(startupCommand)
 
@@ -408,7 +421,7 @@ class ADB(private val context: Context) {
                 continue
             }
 
-            shellProcess?.waitFor()
+            shellSession.awaitDeath()
             setState(ShellSessionState.DEAD)
             _running.postValue(false)
             debug("Shell is dead, resetting...")
@@ -484,12 +497,22 @@ class ADB(private val context: Context) {
      * Send commands directly to the shell process
      */
     fun sendToShellProcess(msg: String) {
-        if (shellProcess == null || shellProcess?.outputStream == null)
-            return
-        PrintStream(shellProcess!!.outputStream!!).apply {
-            println(msg)
-            flush()
+        shellSession.send(msg)
+    }
+
+    /**
+     * Tear down the shell and the ADB server (used by the quick settings tile)
+     */
+    fun disconnect() {
+        shellSession.destroy()
+
+        adb(false, listOf("kill-server")).let {
+            if (!it.waitFor(5, TimeUnit.SECONDS))
+                it.destroyForcibly()
         }
+
+        setState(ShellSessionState.IDLE)
+        _running.postValue(false)
     }
 
     /**

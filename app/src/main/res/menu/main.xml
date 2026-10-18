@@ -12,6 +12,11 @@
         app:showAsAction="ifRoom"
         android:icon="@drawable/ic_baseline_restore_24dp" />
     <item
+        android:id="@+id/history"
+        android:title="@string/history"
+        app:showAsAction="withText"
+        android:icon="@drawable/ic_baseline_restore_24dp" />
+    <item
         android:id="@+id/share"
         android:title="@string/share"
         app:showAsAction="withText"

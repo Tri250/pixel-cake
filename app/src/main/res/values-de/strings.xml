@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">LADB</string>
+
+    <string name="command_hint">Shell-Befehl</string>
+    <string name="command_hint_waiting">Warte auf Verbindung…</string>
+
+    <string name="bookmarks">Lesezeichen</string>
+    <string name="last_command">Letzter Befehl</string>
+    <string name="help">Hilfe</string>
+    <string name="more">Mehr</string>
+    <string name="share">Teilen</string>
+    <string name="clear">Bildschirm leeren</string>
+    <string name="add">Hinzufügen</string>
+    <string name="delete">Löschen</string>
+    <string name="edit">Bearbeiten</string>
+    <string name="cancel">Abbrechen</string>
+    <string name="done">Fertig</string>
+    <string name="pair">Koppeln</string>
+    <string name="skip">Überspringen</string>
+    <string name="dismiss">Schließen</string>
+
+    <string name="delete_confirm">Dies wirklich löschen?</string>
+
+    <string name="snackbar_intent_failed">Intent konnte nicht gestartet werden</string>
+
+    <string name="port_hint">Port</string>
+    <string name="code_hint">Kopplungscode</string>
+    <string name="pair_title">Kopplungsinformationen</string>
+    <string name="pair_message">Du musst dieses Gerät über einen Kopplungscode von der Seite \"Drahtloses
+        Debugging\" in den Entwickleroptionen mit LADB verbinden. Wenn du das noch nie gemacht hast, tippe für ein
+        Tutorial auf \"Hilfe\".
+    </string>
+    <string name="pair_guide">1. Öffne Einstellungen → Entwickleroptionen → Drahtloses Debugging\n2. Tippe auf \"Gerät mit Kopplungscode koppeln\"\n3. Gib unten Port und Kopplungscode ein</string>
+    <string name="pair_error_invalid">Bitte Port und Kopplungscode eingeben</string>
+    <string name="pair_error_failed">Kopplung fehlgeschlagen. Port und Code prüfen und erneut versuchen</string>
+
+    <string name="history">Befehlsverlauf</string>
+    <string name="clear_history">Verlauf löschen</string>
+
+    <string name="import_bookmarks">Importieren</string>
+    <string name="export_bookmarks">Exportieren</string>
+    <string name="import_success">Lesezeichen importiert</string>
+    <string name="import_failed">Import fehlgeschlagen: ungültige Datei</string>
+    <string name="export_success">Lesezeichen exportiert</string>
+    <string name="export_failed">Export fehlgeschlagen</string>
+
+    <string name="shortcut_terminal">Terminal öffnen</string>
+    <string name="shortcut_bookmarks">Lesezeichen</string>
+
+    <string name="tile_connected">Verbunden</string>
+    <string name="tile_disconnected">Zum Verbinden tippen</string>
+
+    <string name="settings">Einstellungen</string>
+    <string name="troubleshooting">Fehlerbehebung</string>
+    <string name="about">Über</string>
+
+    <string name="unpair_title">Entkoppeln</string>
+    <string name="unpair_summary">Vorhandene Kopplungsinformationen löschen</string>
+
+    <string name="restart_title">Neustart</string>
+    <string name="restart_summary">ADB-Server neu starten, um Änderungen anzuwenden</string>
+
+    <string name="auto_shell_title">Koppeln &amp; Shell</string>
+    <string name="auto_shell_summary">Automatisch eine ADB-Shell öffnen; deaktivieren, um eine normale Shell ohne
+        Kopplung zu verwenden
+    </string>
+
+    <string name="buffer_size_title">Puffergröße</string>
+    <string name="buffer_size_summary">Größe des Ausgabepuffers. Ein größerer Wert zeigt mehr Ausgabe auf einmal,
+        kostet aber Leistung. (Standard: 16384)
+    </string>
+
+    <string name="startup_command_title">Startbefehl</string>
+    <string name="startup_command_summary">Der Befehl, der nach dem Start der Shell ausgeführt wird</string>
+
+    <string name="tutorial_title">Tutorial</string>
+    <string name="tutorial_summary">Tutorial auf der XDA-Developers-Seite ansehen</string>
+
+    <string name="error_waiting_title">Blockiert bei \"Warten\"</string>
+    <string name="error_waiting_summary">Entweder wurden die Kopplungsinformationen falsch eingegeben oder dein
+        Gerät wird nicht erkannt. Stelle zunächst sicher, dass drahtloses Debugging wirklich aktiviert ist. Falls
+        das nicht hilft, nutze \"Entkoppeln\", um es erneut zu versuchen.
+    </string>
+
+    <string name="error_no_wireless_debugging_title">Kein Schalter für \"Drahtloses Debugging\"</string>
+    <string name="error_no_wireless_debugging_summary">Dein Gerät unterstützt kein drahtloses Debugging, das LADB
+        benötigt. Alternativ kannst du die Funktion per PC bis zum nächsten Neustart aktivieren. Verbinde das Gerät
+        mit einem PC und gib ein: adb tcpip 5555
+    </string>
+
+    <string name="developer_title">Entwickler</string>
+    <string name="developer_summary">Tyler Nijmeh</string>
+
+    <string name="source_title">Quellcode</string>
+    <string name="source_summary">Quellcode auf GitHub ansehen</string>
+
+    <string name="contact_title">Kontakt</string>
+    <string name="contact_summary">Schreib mir für Hilfe eine E-Mail</string>
+
+    <string name="licenses_title">Lizenzen</string>
+    <string name="licenses_summary">Open-Source-Lizenzen ansehen</string>
+
+    <string name="theme_title">Design</string>
+    <string name="theme_summary">Farbschema der App (gilt nach Neustart)</string>
+    <string name="theme_system">System folgen</string>
+    <string name="theme_light">Hell</string>
+    <string name="theme_dark">Dunkel</string>
+
+    <string name="font_size_title">Schriftgröße</string>
+    <string name="font_size_summary">Schriftgröße der Terminal-Ausgabe in sp (Standard: 14)</string>
+
+    <string name="keep_screen_on_title">Display anlassen</string>
+    <string name="keep_screen_on_summary">Verhindert, dass der Bildschirm bei geöffnetem LADB ausgeht</string>
+
+    <string name="strict_ip_check_title">Strenge IP-Prüfung</string>
+    <string name="strict_ip_check_summary">Nur gefundene Geräte akzeptieren, deren IP mit diesem Gerät
+        übereinstimmt. Deaktivieren, wenn nichts gefunden wird
+    </string>
+</resources>

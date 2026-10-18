@@ -11,11 +11,13 @@ import androidx.core.view.updateLayoutParams
 import com.draco.ladb.R
 import com.draco.ladb.databinding.ActivityHelpBinding
 import com.draco.ladb.fragments.HelpPreferenceFragment
+import com.draco.ladb.utils.ThemeUtil
 
 class HelpActivity : AppCompatActivity() {
     private lateinit var binding: ActivityHelpBinding
 
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeUtil.apply(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         binding = ActivityHelpBinding.inflate(layoutInflater)

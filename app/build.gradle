@@ -12,8 +12,8 @@ android {
         applicationId "com.draco.ladb"
         minSdk 26
         targetSdk 36
-        versionCode 56
-        versionName "2.0.0-alpha01"
+        versionCode 57
+        versionName "2.0.0-alpha02"
 
         ndk {
             /* Only the ABIs that ship with bundled native libs */
@@ -66,7 +66,8 @@ dependencies {
     implementation 'androidx.lifecycle:lifecycle-livedata-ktx:2.9.0'
     implementation 'androidx.lifecycle:lifecycle-runtime-ktx:2.9.0'
 
-    implementation 'com.github.javiersantos:PiracyChecker:1.2.8'
+    implementation 'androidx.datastore:datastore-preferences:1.1.4'
+    implementation 'com.google.android.play:integrity:1.6.0'
 
     implementation("androidx.activity:activity-ktx:1.10.1")
 

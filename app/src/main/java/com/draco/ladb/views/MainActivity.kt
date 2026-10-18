@@ -7,23 +7,24 @@ import android.view.*
 import android.view.inputmethod.EditorInfo
 import android.view.inputmethod.InputMethodManager
 import android.widget.ScrollView
+import android.widget.TextView
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.core.content.edit
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
-import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.R
+import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.databinding.ActivityMainBinding
 import com.draco.ladb.domain.CommandHistory
+import com.draco.ladb.utils.ThemeUtil
 import com.draco.ladb.viewmodels.MainActivityViewModel
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
@@ -40,13 +41,10 @@ class MainActivity : AppCompatActivity() {
 
     private var lastCommand = ""
 
+    private val settings by lazy { SettingsRepository.getInstance(applicationContext) }
     private val history = CommandHistory()
     private var historyIndex = -1
     private var historyDraft = ""
-
-    private companion object {
-        const val HISTORY_KEY = "command_history"
-    }
 
     private var bookmarkGetResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         val text = it.data?.getStringExtra(Intent.EXTRA_TEXT) ?: return@registerForActivityResult
@@ -121,8 +119,8 @@ class MainActivity : AppCompatActivity() {
 
         if (text.isNotBlank()) {
             history.record(text)
-            PreferenceManager.getDefaultSharedPreferences(this).edit {
-                putString(HISTORY_KEY, history.serialize())
+            lifecycleScope.launch(Dispatchers.IO) {
+                settings.setHistory(history.serialize())
             }
         }
 
@@ -193,33 +191,40 @@ class MainActivity : AppCompatActivity() {
     private fun pairAndStart() {
         if (viewModel.needsToPair()) {
             viewModel.adb.debug("Requesting pairing information")
-            askToPair { thisPairSuccess ->
-                if (thisPairSuccess) {
-                    viewModel.setPairedBefore(true)
-                    viewModel.startADBServer()
-                } else {
-                    /* Failed; try again! */
-                    viewModel.adb.debug("Failed to pair! Trying again...")
-                    runOnUiThread { pairAndStart() }
-                }
-            }
+            requestPairing()
         } else {
             viewModel.startADBServer()
         }
     }
 
+    private fun requestPairing() {
+        askToPair { success ->
+            if (success) {
+                viewModel.setPairedBefore(true)
+                viewModel.startADBServer()
+            } else {
+                /* Failed; let the user retry with an inline error hint */
+                viewModel.adb.debug("Failed to pair! Trying again...")
+                runOnUiThread { requestPairing() }
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
+        ThemeUtil.apply(this)
         enableEdgeToEdge()
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        if (settings.blockingKeepScreenOn())
+            window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        binding.output.textSize = settings.blockingFontSize().toFloatOrNull() ?: 14f
+
         setupUI()
         setupDataListeners()
 
-        history.load(
-            PreferenceManager.getDefaultSharedPreferences(this).getString(HISTORY_KEY, null)
-        )
+        history.load(settings.blockingHistory())
 
         /* Ensure we are not running this a second time around */
         if (viewModel.viewModelHasStartedADB.value != true) {
@@ -227,25 +232,48 @@ class MainActivity : AppCompatActivity() {
                 pairAndStart()
         }
 
-        viewModel.piracyCheck(this)
+        viewModel.piracyCheck()
     }
 
     /**
      * Ask the user to pair
      */
-    private fun askToPair(callback: ((Boolean) -> (Unit))? = null) {
+    private fun askToPair(failedBefore: Boolean = false, callback: ((Boolean) -> Unit)? = null) {
         pairDialog
             .create()
             .apply {
                 setOnShowListener {
+                    val portInput = findViewById<TextInputEditText>(R.id.port)!!
+                    val codeInput = findViewById<TextInputEditText>(R.id.code)!!
+                    val errorText = findViewById<TextView>(R.id.pair_error)!!
+
+                    /* Prefill the last successfully paired port */
+                    val latestPort = settings.blockingLatestPairedPort()
+                    if (!latestPort.isNullOrEmpty() && portInput.text.isNullOrBlank())
+                        portInput.setText(latestPort)
+
+                    if (failedBefore) {
+                        errorText.setText(R.string.pair_error_failed)
+                        errorText.visibility = View.VISIBLE
+                    }
+
                     getButton(AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                        val port = findViewById<TextInputEditText>(R.id.port)!!.text.toString()
-                        val code = findViewById<TextInputEditText>(R.id.code)!!.text.toString()
+                        val port = portInput.text.toString()
+                        val code = codeInput.text.toString()
+
+                        if (port.isBlank() || code.isBlank()) {
+                            errorText.setText(R.string.pair_error_invalid)
+                            errorText.visibility = View.VISIBLE
+                            return@setOnClickListener
+                        }
+
                         dismiss()
 
                         lifecycleScope.launch(Dispatchers.IO) {
                             viewModel.adb.debug("Trying to pair...")
                             val success = viewModel.adb.pair(port, code)
+                            if (success)
+                                viewModel.saveDeviceProfile(port)
                             callback?.invoke(success)
                         }
                     }
@@ -266,14 +294,39 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     getButton(AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                        PreferenceManager.getDefaultSharedPreferences(context).edit(true) {
-                            putBoolean(getString(R.string.auto_shell_key), false)
-                        }
+                        settings.putRawBoolean(SettingsRepository.KEY_AUTO_SHELL, false)
                         dismiss()
                         callback?.invoke(true)
                     }
                 }
             }
+            .show()
+    }
+
+    /**
+     * Show the persisted command history in a picker dialog
+     */
+    private fun showHistoryDialog() {
+        val entries = history.all().reversed()
+        if (entries.isEmpty()) {
+            Snackbar.make(binding.output, getString(R.string.history), Snackbar.LENGTH_SHORT).show()
+            return
+        }
+
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.history)
+            .setItems(entries.toTypedArray()) { _, which ->
+                val command = entries[which]
+                binding.command.setText(command)
+                binding.command.setSelection(command.length)
+            }
+            .setNeutralButton(R.string.clear_history) { _, _ ->
+                history.clear()
+                lifecycleScope.launch(Dispatchers.IO) {
+                    settings.setHistory(null)
+                }
+            }
+            .setNegativeButton(R.string.dismiss, null)
             .show()
     }
 
@@ -289,6 +342,11 @@ class MainActivity : AppCompatActivity() {
             R.id.last_command -> {
                 binding.command.setText(lastCommand)
                 binding.command.setSelection(lastCommand.length)
+                true
+            }
+
+            R.id.history -> {
+                showHistoryDialog()
                 true
             }
 

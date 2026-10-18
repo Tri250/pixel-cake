@@ -1,19 +1,18 @@
 package com.draco.ladb.recyclers
 
 import android.annotation.SuppressLint
-import android.content.Context
 import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.widget.ImageButton
 import android.widget.TextView
-import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import com.draco.ladb.R
+import com.draco.ladb.data.SettingsRepository
 
-class BookmarksRecyclerAdapter(context: Context) : RecyclerView.Adapter<BookmarksRecyclerAdapter.ViewHolder>() {
+class BookmarksRecyclerAdapter(private val settings: SettingsRepository) :
+    RecyclerView.Adapter<BookmarksRecyclerAdapter.ViewHolder>() {
     private val list = sortedSetOf<String>()
-    private val prefs = PreferenceManager.getDefaultSharedPreferences(context)
 
     var pickHook: (String) -> Unit = {}
     var deleteHook: (String) -> Unit = {}
@@ -28,16 +27,13 @@ class BookmarksRecyclerAdapter(context: Context) : RecyclerView.Adapter<Bookmark
     @SuppressLint("NotifyDataSetChanged")
     fun updateList(refresh: Boolean = true) {
         list.clear()
-        list.addAll(prefs.getStringSet("bookmarks", setOf()) ?: emptySet())
+        list.addAll(settings.blockingBookmarks())
         if (refresh)
             notifyDataSetChanged()
     }
 
     private fun saveList() {
-        with(prefs.edit()) {
-            putStringSet("bookmarks", list)
-            apply()
-        }
+        settings.setBookmarksBlocking(list)
     }
 
     @SuppressLint("NotifyDataSetChanged")
@@ -61,6 +57,22 @@ class BookmarksRecyclerAdapter(context: Context) : RecyclerView.Adapter<Bookmark
         notifyDataSetChanged()
         saveList()
     }
+
+    /**
+     * Replace every bookmark with [entries] (used by import)
+     */
+    @SuppressLint("NotifyDataSetChanged")
+    fun replaceAll(entries: List<String>) {
+        list.clear()
+        list.addAll(entries)
+        notifyDataSetChanged()
+        saveList()
+    }
+
+    /**
+     * Snapshot of the current bookmarks (used by export)
+     */
+    fun snapshot(): List<String> = list.toList()
 
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         updateList(false)

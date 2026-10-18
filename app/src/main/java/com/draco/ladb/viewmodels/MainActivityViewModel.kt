@@ -1,6 +1,5 @@
 package com.draco.ladb.viewmodels
 
-import android.app.Activity
 import android.app.Application
 import android.content.Context
 import android.net.nsd.NsdManager
@@ -13,10 +12,11 @@ import androidx.lifecycle.viewModelScope
 import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.R
+import com.draco.ladb.data.SettingsRepository
+import com.draco.ladb.domain.IntegrityCheck
+import com.draco.ladb.domain.IntegrityResult
 import com.draco.ladb.utils.ADB
 import com.draco.ladb.utils.DnsDiscover
-import com.github.javiersantos.piracychecker.PiracyChecker
-import com.github.javiersantos.piracychecker.piracyChecker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -28,8 +28,10 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
 
     val isPairing = MutableLiveData<Boolean>()
 
-    private var checker: PiracyChecker? = null
-    private val sharedPreferences = PreferenceManager
+    private var integrityRan = false
+
+    private val settings = SettingsRepository.getInstance(application.applicationContext)
+    private val verifiedPrefs = PreferenceManager
         .getDefaultSharedPreferences(application.applicationContext)
 
     val adb = ADB.getInstance(getApplication<Application>().applicationContext)
@@ -52,6 +54,8 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
         // Don't start if it's already started.
         if (_viewModelHasStartedADB.value == true || adb.running.value == true) return
 
+        dnsDiscover.strictIpCheck = settings.blockingStrictIpCheck()
+
         viewModelScope.launch(Dispatchers.IO) {
             val success = adb.initServer()
             if (success) {
@@ -63,27 +67,22 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     }
 
     /**
-     * Start the piracy checker if it is not setup yet (release builds only)
-     *
-     * @param activity Activity to use when showing the error
+     * Verify the install with the Play Integrity API if it is not setup yet
+     * (release builds only). Fail-open by design; see [IntegrityCheck].
      */
-    fun piracyCheck(activity: Activity) {
-        if (checker != null || !BuildConfig.ANTI_PIRACY)
+    fun piracyCheck() {
+        if (integrityRan || !BuildConfig.ANTI_PIRACY)
             return
 
-        val context = getApplication<Application>().applicationContext
+        val key = getApplication<Application>().getString(R.string.pref_key_verified)
+        if (verifiedPrefs.getBoolean(key, false))
+            return
 
-        checker = activity.piracyChecker {
-            enableGooglePlayLicensing("MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAoRTOoEZ/IFfA/JkBFIrZqLq7N66JtJFTn/5C2QMO2EIY6hG4yZ5YTA3JrbJuuGVzQE8j29s6Lwu+19KKZcITTkZjfgl2Zku8dWQKZFt46f7mh8s1spzzc6rmSWIBPZUxN6fIIz8ar+wzyZdu3z+Iiy31dUa11Pyh82oOsWH7514AYGeIDDlvB1vSfNF/9ycEqTv5UAOgHxqZ205C1VVydJyCEwWWVJtQ+Z5zRaocI6NGaYRopyZteCEdKkBsZ69vohk4zr2SpllM5+PKb1yM7zfsiFZZanp4JWDJ3jRjEHC4s66elWG45yQi+KvWRDR25MPXhdQ9+DMfF2Ao1NTrgQIDAQAB")
-            saveResultToSharedPreferences(
-                sharedPreferences,
-                context.getString(R.string.pref_key_verified)
-            )
+        integrityRan = true
+        IntegrityCheck(getApplication()).verify { result ->
+            if (result != IntegrityResult.Failed)
+                verifiedPrefs.edit { putBoolean(key, true) }
         }
-
-        val verified = sharedPreferences.getBoolean(context.getString(R.string.pref_key_verified), false)
-        if (!verified)
-            checker?.start()
     }
 
     /**
@@ -120,19 +119,19 @@ class MainActivityViewModel(application: Application) : AndroidViewModel(applica
     /**
      * Check if the user should be prompted to pair
      */
-    fun needsToPair(): Boolean {
-        val context = getApplication<Application>().applicationContext
-
-        return !sharedPreferences.getBoolean(context.getString(R.string.paired_key), false) &&
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
-    }
+    fun needsToPair(): Boolean =
+        !settings.blockingPaired() && (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R)
 
     fun setPairedBefore(value: Boolean) {
-        val context = getApplication<Application>().applicationContext
-        sharedPreferences.edit {
-            putBoolean(context.getString(R.string.paired_key), value)
+        viewModelScope.launch {
+            settings.setPaired(value)
         }
     }
+
+    /**
+     * Remember a successfully paired wireless debugging port
+     */
+    suspend fun saveDeviceProfile(port: String) = settings.saveDeviceProfile(port)
 
     /**
      * Read the content of the ABD output file
