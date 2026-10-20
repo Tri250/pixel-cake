@@ -110,4 +110,9 @@
     <string name="disclaimer_summary">使用本应用前请阅读</string>
     <string name="disclaimer_full">本应用按“现状”提供，不附带任何明示或暗示的担保。对于因使用或滥用本应用而导致的任何直接或间接损失，作者不承担责任。ADB 命令可能改变设备的系统状态，请仅执行你完全理解并确认安全的命令。</string>
 
+
+    <string name="import_confirm">将所有现有书签替换为导入的 %1$d 条记录？</string>
+    <string name="shortcut_terminal_disabled">终端当前不可用</string>
+    <string name="shortcut_bookmarks_disabled">书签当前不可用</string>
+
 </resources>

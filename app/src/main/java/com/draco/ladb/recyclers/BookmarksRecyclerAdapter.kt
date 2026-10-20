@@ -8,10 +8,11 @@ import android.widget.ImageButton
 import android.widget.TextView
 import androidx.recyclerview.widget.RecyclerView
 import com.draco.ladb.R
-import com.draco.ladb.data.SettingsRepository
 
-class BookmarksRecyclerAdapter(private val settings: SettingsRepository) :
-    RecyclerView.Adapter<BookmarksRecyclerAdapter.ViewHolder>() {
+class BookmarksRecyclerAdapter(
+    /** Called off the main thread path so persistence never blocks scrolling. */
+    private val onPersist: (Set<String>) -> Unit
+) : RecyclerView.Adapter<BookmarksRecyclerAdapter.ViewHolder>() {
     private val list = sortedSetOf<String>()
 
     var pickHook: (String) -> Unit = {}
@@ -25,15 +26,15 @@ class BookmarksRecyclerAdapter(private val settings: SettingsRepository) :
     }
 
     @SuppressLint("NotifyDataSetChanged")
-    fun updateList(refresh: Boolean = true) {
+    fun updateList(values: Set<String>, refresh: Boolean = true) {
         list.clear()
-        list.addAll(settings.blockingBookmarks())
+        list.addAll(values)
         if (refresh)
             notifyDataSetChanged()
     }
 
     private fun saveList() {
-        settings.setBookmarksBlocking(list)
+        onPersist(list.toSet())
     }
 
     @SuppressLint("NotifyDataSetChanged")

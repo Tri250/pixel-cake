@@ -123,4 +123,9 @@
     <string name="disclaimer_summary">Léelo antes de usar la aplicación</string>
     <string name="disclaimer_full">Esta aplicación se proporciona "tal cual", sin garantías de ningún tipo, expresas o implícitas. Los autores no serán responsables de ningún daño directo o indirecto derivado del uso o abuso de esta aplicación. Los comandos ADB pueden alterar el estado del sistema de tu dispositivo: ejecuta únicamente comandos que entiendas por completo.</string>
 
+
+    <string name="import_confirm">¿Reemplazar todos los marcadores actuales con %1$d entradas importadas?</string>
+    <string name="shortcut_terminal_disabled">Terminal no disponible</string>
+    <string name="shortcut_bookmarks_disabled">Marcadores no disponibles</string>
+
 </resources>

@@ -1,8 +1,10 @@
 package com.draco.ladb.views
 
 import android.content.Intent
-import android.net.Uri
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
+import android.util.Log
 import android.view.*
 import android.view.inputmethod.EditorInfo
 import android.widget.ScrollView
@@ -13,16 +15,15 @@ import androidx.activity.viewModels
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.FileProvider
-import androidx.core.view.ViewCompat
+import androidx.core.net.toUri
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.R
 import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.databinding.ActivityMainBinding
 import com.draco.ladb.domain.CommandHistory
+import com.draco.ladb.utils.EdgeToEdgeUtil
 import com.draco.ladb.utils.ThemeUtil
 import com.draco.ladb.viewmodels.MainActivityViewModel
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -45,31 +46,19 @@ class MainActivity : AppCompatActivity() {
     private var historyIndex = -1
     private var historyDraft = ""
 
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /** True while the pairing dialog is on screen. */
+    private var pairDialogShowing = false
+
     private var bookmarkGetResult = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
         val text = it.data?.getStringExtra(Intent.EXTRA_TEXT) ?: return@registerForActivityResult
         binding.command.setText(text)
     }
 
     private fun setupUI() {
-        /* Fix stupid Google edge-to-edge bullshit */
-        ViewCompat.setOnApplyWindowInsetsListener(binding.content) { v, windowInsets ->
-            val systemBarsInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.statusBars())
-            windowInsets.getInsets(WindowInsetsCompat.Type.statusBars())
-
-            v.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                leftMargin = systemBarsInsets.left
-                bottomMargin = systemBarsInsets.bottom
-                rightMargin = systemBarsInsets.right
-                topMargin = systemBarsInsets.top
-            }
-            binding.statusBarBackground.updateLayoutParams {
-                height = statusBarInsets.top
-            }
-
-            WindowInsetsCompat.CONSUMED
-        }
-        supportActionBar!!.elevation = 0f
+        EdgeToEdgeUtil.applyInsets(binding.content, binding.statusBarBackground)
+        supportActionBar?.elevation = 0f
         WindowCompat.getInsetsController(window, window.decorView)
             .isAppearanceLightStatusBars = false
 
@@ -172,10 +161,7 @@ class MainActivity : AppCompatActivity() {
         /* Restart the activity on reset */
         viewModel.adb.closed.observe(this) { closed ->
             if (closed == true) {
-                val intent = Intent(this, MainActivity::class.java)
-                startActivity(intent)
-                finishAffinity()
-                exitProcess(0)
+                restartProcess()
             }
         }
 
@@ -188,15 +174,15 @@ class MainActivity : AppCompatActivity() {
     private fun pairAndStart() {
         if (viewModel.needsToPair()) {
             viewModel.adb.debug("Requesting pairing information")
-            requestPairing()
+            requestPairing(failedBefore = false)
         } else {
             viewModel.startADBServer()
         }
     }
 
-    private fun requestPairing() {
+    private fun requestPairing(failedBefore: Boolean) {
         viewModel.isPairing.value = true
-        askToPair { success ->
+        askToPair(failedBefore) { success ->
             if (success) {
                 viewModel.isPairing.value = false
                 viewModel.setPairedBefore(true)
@@ -204,7 +190,7 @@ class MainActivity : AppCompatActivity() {
             } else {
                 /* Failed; let the user retry with an inline error hint */
                 viewModel.adb.debug("Failed to pair! Trying again...")
-                runOnUiThread { requestPairing() }
+                runOnUiThread { requestPairing(failedBefore = true) }
             }
         }
     }
@@ -212,10 +198,22 @@ class MainActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
 
-        /* Reconnect when the session was torn down externally (quick settings
-           tile) or the previous startup attempt failed. */
-        if (viewModel.isPairing.value != true && viewModel.adb.running.value != true)
-            viewModel.startADBServer()
+        if (viewModel.adb.running.value == true)
+            return
+
+        when {
+            /* Pairing is in progress: only re-open the dialog when it was
+               lost (e.g. a configuration change mid-attempt) so the user is
+               never left on a dead screen. */
+            viewModel.isPairing.value == true -> {
+                if (!pairDialogShowing && !viewModel.pairingInFlight)
+                    requestPairing(failedBefore = true)
+            }
+
+            /* Reconnect when the session was torn down externally (quick
+               settings tile) or the previous startup attempt failed. */
+            else -> viewModel.startADBServer()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -252,10 +250,14 @@ class MainActivity : AppCompatActivity() {
         pairDialog
             .create()
             .apply {
+                setOnDismissListener { pairDialogShowing = false }
                 setOnShowListener {
-                    val portInput = findViewById<TextInputEditText>(R.id.port)!!
-                    val codeInput = findViewById<TextInputEditText>(R.id.code)!!
-                    val errorText = findViewById<TextView>(R.id.pair_error)!!
+                    pairDialogShowing = true
+
+                    val portInput = findViewById<TextInputEditText>(R.id.port) ?: return@setOnShowListener
+                    val codeInput = findViewById<TextInputEditText>(R.id.code) ?: return@setOnShowListener
+                    val errorText = findViewById<TextView>(R.id.pair_error)
+                        ?: return@setOnShowListener
 
                     /* Prefill the last successfully paired port */
                     val latestPort = settings.blockingLatestPairedPort()
@@ -280,8 +282,14 @@ class MainActivity : AppCompatActivity() {
                         dismiss()
 
                         lifecycleScope.launch(Dispatchers.IO) {
-                            viewModel.adb.debug("Trying to pair...")
-                            val success = viewModel.adb.pair(port, code)
+                            viewModel.pairingInFlight = true
+                            val success = try {
+                                viewModel.adb.debug("Trying to pair...")
+                                viewModel.adb.pair(port, code)
+                            } finally {
+                                viewModel.pairingInFlight = false
+                            }
+
                             if (success)
                                 viewModel.saveDeviceProfile(port)
                             callback?.invoke(success)
@@ -289,11 +297,11 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(getString(R.string.tutorial_url)))
+                        val intent = Intent(Intent.ACTION_VIEW, getString(R.string.tutorial_url).toUri())
                         try {
                             startActivity(intent)
                         } catch (e: Exception) {
-                            e.printStackTrace()
+                            Log.w(TAG, "Unable to open the tutorial", e)
                             Snackbar.make(
                                 binding.output,
                                 getString(R.string.snackbar_intent_failed),
@@ -376,10 +384,10 @@ class MainActivity : AppCompatActivity() {
                     val intent = Intent(Intent.ACTION_SEND)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK)
                         .putExtra(Intent.EXTRA_STREAM, uri)
-                        .setType("file/*")
+                        .setType("text/plain")
                     startActivity(intent)
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.w(TAG, "Unable to share the output buffer", e)
                     Snackbar.make(binding.output, getString(R.string.snackbar_intent_failed), Snackbar.LENGTH_SHORT)
                         .setAction(getString(R.string.dismiss)) {}
                         .show()
@@ -399,5 +407,29 @@ class MainActivity : AppCompatActivity() {
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.main, menu)
         return true
+    }
+
+    /**
+     * Restart the app from scratch.
+     *
+     * The intent is dispatched first and the process kill is deferred so the
+     * activity manager has time to accept the launch request.
+     */
+    private fun restartProcess() {
+        val intent = Intent(this, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+        try {
+            startActivity(intent)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to relaunch the terminal", t)
+        }
+
+        finishAffinity()
+        mainHandler.postDelayed({ exitProcess(0) }, RESTART_DELAY_MS)
+    }
+
+    private companion object {
+        const val TAG = "MainActivity"
+        const val RESTART_DELAY_MS = 250L
     }
 }

@@ -113,11 +113,14 @@
     <string name="export_bookmarks">Export</string>
     <string name="import_success">Bookmarks imported</string>
     <string name="import_failed">Import failed: invalid file</string>
+    <string name="import_confirm">Replace all current bookmarks with %1$d imported entries?</string>
     <string name="export_success">Bookmarks exported</string>
     <string name="export_failed">Export failed</string>
 
     <string name="shortcut_terminal">Open terminal</string>
     <string name="shortcut_bookmarks">Bookmarks</string>
+    <string name="shortcut_terminal_disabled">Terminal is unavailable</string>
+    <string name="shortcut_bookmarks_disabled">Bookmarks are unavailable</string>
 
     <string name="tile_connected">Connected</string>
     <string name="tile_disconnected">Tap to connect</string>

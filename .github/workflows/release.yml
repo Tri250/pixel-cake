@@ -3,6 +3,12 @@ name: Release
 on:
   push:
     tags: [ 'v*' ]
+  workflow_dispatch:
+
+# Never let two releases race for the same tag.
+concurrency:
+  group: release-${{ github.ref_name }}
+  cancel-in-progress: false
 
 permissions:
   contents: write
@@ -23,6 +29,9 @@ jobs:
       - name: Set up Gradle caching
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Run unit tests before publishing
+        run: ./gradlew testDebugUnitTest
+
       - name: Build release APK
         run: ./gradlew assembleRelease
 
@@ -41,6 +50,7 @@ jobs:
           if [ -n "$KEYSTORE_BASE64" ] && [ -n "$KEYSTORE_PASSWORD" ] && [ -n "$KEY_ALIAS" ] && [ -n "$KEY_PASSWORD" ]; then
             echo "$KEYSTORE_BASE64" | base64 -d > keystore.jks
             APKSIGNER="$(ls "$ANDROID_HOME"/build-tools/*/apksigner | sort -V | tail -n 1)"
+
             "$APKSIGNER" sign \
               --ks keystore.jks \
               --ks-key-alias "$KEY_ALIAS" \
@@ -48,21 +58,40 @@ jobs:
               --key-pass "pass:$KEY_PASSWORD" \
               --out "$OUT" \
               "$UNSIGNED"
+
             rm -f keystore.jks
+
+            # Fail the job when the artifact would not be installable.
+            "$APKSIGNER" verify --verbose --print-certs "$OUT"
+
+            SIGNED="true"
           else
-            echo "Signing secrets not configured; publishing unsigned APK"
+            echo "::warning::Signing secrets not configured; publishing an UNSIGNED APK that will not install."
             cp "$UNSIGNED" "$OUT"
+            SIGNED="false"
           fi
 
           echo "apk=$OUT" >> "$GITHUB_OUTPUT"
+          echo "signed=$SIGNED" >> "$GITHUB_OUTPUT"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: LADB ${{ github.ref_name }}
+          name: LADB ${{ steps.apk.outputs.version }}
           body: |
-            **安装说明**
-            - APK 已使用发布密钥签名；如果设备提示签名冲突或覆盖安装失败，请先卸载旧版本再安装（仅在从旧签名/开发版迁移时需要一次，之后可正常覆盖升级）
-            - 支持 arm64-v8a 与 x86_64 设备（Android 8.0+）
+            ## 安装说明
+
+            - 支持 arm64-v8a 与 x86_64 设备（Android 8.0+，targetSdk 36）
+            - ${{ steps.apk.outputs.signed == 'true' && 'APK 已使用发布密钥签名，可直接安装。' || '⚠️ 本次为**未签名**构建（仓库未配置签名密钥），无法直接安装，仅供验证使用。' }}
+            - 若提示签名冲突或覆盖安装失败，请先卸载旧版本再安装（仅在从旧签名/开发版迁移时需要一次，之后可正常覆盖升级）
+
+            ## 本次更新
+
+            - 修复启动崩溃：ADB 启动链路全面异常封闭，原生二进制 16KB 页面兼容性自检
+            - 稳定性：配对中断可恢复、会话生命周期显式化、输出缓冲区不再产生稀疏空洞
+            - 性能：书签读写移出主线程，输出轮询按文件大小增量读取
+            - 兼容性：备份/数据提取规则、预测性返回、快捷方式语义修正
+            - 安装卸载：缓存文件随卸载回收，设置/书签使用 DataStore 备份规则
           generate_release_notes: true
           files: ${{ steps.apk.outputs.apk }}

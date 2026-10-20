@@ -123,4 +123,9 @@
     <string name="disclaimer_summary">Bitte vor der Nutzung lesen</string>
     <string name="disclaimer_full">Diese App wird „wie besehen" und ohne jegliche ausdrückliche oder stillschweigende Garantie bereitgestellt. Die Autoren haften nicht für direkte oder indirekte Schäden, die aus der Nutzung oder dem Missbrauch dieser App entstehen. ADB-Befehle können den Systemzustand deines Geräts verändern — führe nur Befehle aus, die du vollständig verstehst.</string>
 
+
+    <string name="import_confirm">Alle aktuellen Lesezeichen durch %1$d importierte Einträge ersetzen?</string>
+    <string name="shortcut_terminal_disabled">Terminal nicht verfügbar</string>
+    <string name="shortcut_bookmarks_disabled">Lesezeichen nicht verfügbar</string>
+
 </resources>

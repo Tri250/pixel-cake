@@ -2,6 +2,7 @@ package com.draco.ladb.data
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Log
 import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.Preferences
 import androidx.datastore.preferences.core.booleanPreferencesKey
@@ -22,9 +23,15 @@ private val Context.dataStore: DataStore<Preferences> by preferencesDataStore(na
  *
  * Blocking accessors are intended for short startup paths only (activity
  * creation, ADB server initialization). Prefer the suspend variants elsewhere.
+ *
+ * Every read is fail-safe: storage corruption or an unexpected type change
+ * falls back to the default value instead of taking the app down during
+ * startup.
  */
 class SettingsRepository private constructor(private val context: Context) {
     companion object {
+        private const val TAG = "SettingsRepository"
+
         const val KEY_AUTO_SHELL = "auto_shell"
         const val KEY_BUFFER_SIZE = "buffer_size"
         const val KEY_STARTUP_COMMAND = "startup_command"
@@ -41,6 +48,7 @@ class SettingsRepository private constructor(private val context: Context) {
         const val DEFAULT_BUFFER_SIZE = "16384"
         const val DEFAULT_FONT_SIZE = "14"
         const val DEFAULT_STARTUP_COMMAND = "echo 'Success! ※\\(^o^)/※'"
+        const val DEFAULT_THEME = "system"
 
         @Volatile
         @SuppressLint("StaticFieldLeak")
@@ -56,47 +64,60 @@ class SettingsRepository private constructor(private val context: Context) {
 
     init {
         /* Copy legacy SharedPreferences values once, before any read. */
-        runBlocking { migrateIfNeeded() }
+        try {
+            runBlocking { migrateIfNeeded() }
+        } catch (t: Throwable) {
+            /* A broken migration must never keep the app from starting. */
+            Log.e(TAG, "Legacy preference migration failed", t)
+        }
     }
 
     /* ---------------- migration ---------------- */
 
     private suspend fun migrateIfNeeded() {
-        val migrated = data.data.first()[booleanPreferencesKey(KEY_MIGRATED)] ?: false
-        if (migrated)
+        if (data.data.first()[booleanPreferencesKey(KEY_MIGRATED)] == true)
             return
 
-        val legacy = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
-        data.edit { prefs ->
-            legacy.all.forEach { (key, value) ->
-                when (value) {
-                    is Boolean -> prefs[booleanPreferencesKey(key)] = value
-                    is String -> prefs[stringPreferencesKey(key)] = value
-                    is Set<*> -> prefs[stringSetPreferencesKey(key)] =
-                        value.filterIsInstance<String>().toSet()
+        try {
+            val legacy = context.getSharedPreferences(LEGACY_PREFS_NAME, Context.MODE_PRIVATE)
+            data.edit { prefs ->
+                legacy.all.forEach { (key, value) ->
+                    when (value) {
+                        is Boolean -> prefs[booleanPreferencesKey(key)] = value
+                        is String -> prefs[stringPreferencesKey(key)] = value
+                        is Set<*> -> prefs[stringSetPreferencesKey(key)] =
+                            value.filterIsInstance<String>().toSet()
+                    }
                 }
+                prefs[booleanPreferencesKey(KEY_MIGRATED)] = true
             }
-            prefs[booleanPreferencesKey(KEY_MIGRATED)] = true
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to migrate legacy preferences", t)
         }
     }
 
     /* ---------------- typed blocking accessors (startup paths) ---------------- */
 
-    fun blockingAutoShell(): Boolean = blocking { it[booleanPreferencesKey(KEY_AUTO_SHELL)] ?: true }
-    fun blockingBufferSize(): String = blocking { it[stringPreferencesKey(KEY_BUFFER_SIZE)] ?: DEFAULT_BUFFER_SIZE }
-    fun blockingStartupCommand(): String = blocking { it[stringPreferencesKey(KEY_STARTUP_COMMAND)] ?: DEFAULT_STARTUP_COMMAND }
-    fun blockingPaired(): Boolean = blocking { it[booleanPreferencesKey(KEY_PAIRED)] ?: false }
-    fun blockingTheme(): String = blocking { it[stringPreferencesKey(KEY_THEME)] ?: "system" }
-    fun blockingFontSize(): String = blocking { it[stringPreferencesKey(KEY_FONT_SIZE)] ?: DEFAULT_FONT_SIZE }
-    fun blockingKeepScreenOn(): Boolean = blocking { it[booleanPreferencesKey(KEY_KEEP_SCREEN_ON)] ?: false }
-    fun blockingStrictIpCheck(): Boolean = blocking { it[booleanPreferencesKey(KEY_STRICT_IP_CHECK)] ?: false }
-    fun blockingHistory(): String? = blocking { it[stringPreferencesKey(KEY_HISTORY)] }
-    fun blockingBookmarks(): Set<String> = blocking { it[stringSetPreferencesKey(KEY_BOOKMARKS)] ?: emptySet() }
-    fun blockingLatestPairedPort(): String? = blocking { prefs -> deviceProfiles(prefs).firstOrNull()?.port }
-    fun blockingRawString(key: String, defValue: String?): String? = blocking { it[stringPreferencesKey(key)] ?: defValue }
-    fun blockingRawBoolean(key: String, defValue: Boolean): Boolean = blocking { it[booleanPreferencesKey(key)] ?: defValue }
+    fun blockingAutoShell(): Boolean = blocking(true) { it[booleanPreferencesKey(KEY_AUTO_SHELL)] ?: true }
+    fun blockingBufferSize(): String = blocking(DEFAULT_BUFFER_SIZE) { it[stringPreferencesKey(KEY_BUFFER_SIZE)] ?: DEFAULT_BUFFER_SIZE }
+    fun blockingStartupCommand(): String = blocking(DEFAULT_STARTUP_COMMAND) { it[stringPreferencesKey(KEY_STARTUP_COMMAND)] ?: DEFAULT_STARTUP_COMMAND }
+    fun blockingPaired(): Boolean = blocking(false) { it[booleanPreferencesKey(KEY_PAIRED)] ?: false }
+    fun blockingTheme(): String = blocking(DEFAULT_THEME) { it[stringPreferencesKey(KEY_THEME)] ?: DEFAULT_THEME }
+    fun blockingFontSize(): String = blocking(DEFAULT_FONT_SIZE) { it[stringPreferencesKey(KEY_FONT_SIZE)] ?: DEFAULT_FONT_SIZE }
+    fun blockingKeepScreenOn(): Boolean = blocking(false) { it[booleanPreferencesKey(KEY_KEEP_SCREEN_ON)] ?: false }
+    fun blockingStrictIpCheck(): Boolean = blocking(false) { it[booleanPreferencesKey(KEY_STRICT_IP_CHECK)] ?: false }
+    fun blockingHistory(): String? = blocking(null) { it[stringPreferencesKey(KEY_HISTORY)] }
+    fun blockingBookmarks(): Set<String> = blocking(emptySet()) { it[stringSetPreferencesKey(KEY_BOOKMARKS)] ?: emptySet() }
+    fun blockingLatestPairedPort(): String? = blocking(null) { prefs -> deviceProfiles(prefs).firstOrNull()?.port }
+    fun blockingRawString(key: String, defValue: String?): String? = blocking(defValue) { it[stringPreferencesKey(key)] ?: defValue }
+    fun blockingRawBoolean(key: String, defValue: Boolean): Boolean = blocking(defValue) { it[booleanPreferencesKey(key)] ?: defValue }
 
-    private fun <T> blocking(block: (Preferences) -> T): T = runBlocking { block(data.data.first()) }
+    private fun <T> blocking(default: T, block: (Preferences) -> T): T = try {
+        runBlocking { block(data.data.first()) }
+    } catch (t: Throwable) {
+        Log.e(TAG, "Settings read failed, falling back to default", t)
+        default
+    }
 
     /* ---------------- writes ---------------- */
 
@@ -104,7 +125,13 @@ class SettingsRepository private constructor(private val context: Context) {
         data.edit { it[booleanPreferencesKey(KEY_PAIRED)] = value }
     }
 
-    fun setPairedBlocking(value: Boolean) = runBlocking { setPaired(value) }
+    fun setPairedBlocking(value: Boolean) {
+        try {
+            runBlocking { setPaired(value) }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to persist paired state", t)
+        }
+    }
 
     suspend fun setHistory(raw: String?) {
         val key = stringPreferencesKey(KEY_HISTORY)
@@ -116,24 +143,36 @@ class SettingsRepository private constructor(private val context: Context) {
         }
     }
 
-    fun setBookmarksBlocking(value: Set<String>) {
-        runBlocking { data.edit { it[stringSetPreferencesKey(KEY_BOOKMARKS)] = value } }
+    fun setBookmarks(values: Set<String>) {
+        try {
+            runBlocking { data.edit { it[stringSetPreferencesKey(KEY_BOOKMARKS)] = values } }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to persist bookmarks", t)
+        }
     }
 
     fun putRawString(key: String, value: String?) {
         val prefKey = stringPreferencesKey(key)
-        runBlocking {
-            data.edit { prefs ->
-                if (value != null)
-                    prefs[prefKey] = value
-                else
-                    prefs.remove(prefKey)
+        try {
+            runBlocking {
+                data.edit { prefs ->
+                    if (value != null)
+                        prefs[prefKey] = value
+                    else
+                        prefs.remove(prefKey)
+                }
             }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to persist preference $key", t)
         }
     }
 
     fun putRawBoolean(key: String, value: Boolean) {
-        runBlocking { data.edit { it[booleanPreferencesKey(key)] = value } }
+        try {
+            runBlocking { data.edit { it[booleanPreferencesKey(key)] = value } }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to persist preference $key", t)
+        }
     }
 
     suspend fun saveDeviceProfile(port: String) {
@@ -144,5 +183,10 @@ class SettingsRepository private constructor(private val context: Context) {
     }
 
     private fun deviceProfiles(prefs: Preferences): List<DeviceProfile> =
-        DeviceProfile.decodeAll(prefs[stringPreferencesKey(KEY_DEVICE_PROFILES)] ?: "[]")
+        try {
+            DeviceProfile.decodeAll(prefs[stringPreferencesKey(KEY_DEVICE_PROFILES)] ?: "[]")
+        } catch (t: Throwable) {
+            Log.e(TAG, "Corrupt device profiles, resetting", t)
+            emptyList()
+        }
 }

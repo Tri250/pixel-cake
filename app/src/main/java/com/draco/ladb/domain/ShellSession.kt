@@ -2,6 +2,7 @@ package com.draco.ladb.domain
 
 import java.io.File
 import java.io.PrintStream
+import java.util.concurrent.TimeUnit
 
 /**
  * Owns the interactive shell process so that process lifecycle logic lives
@@ -13,22 +14,45 @@ class ShellSession(
     private val tmpDir: String,
     private val outputBufferFile: File
 ) {
+    @Volatile
     private var process: Process? = null
+
+    /**
+     * Lazily created writer bound to the current process stdin. Reused so
+     * every keystroke does not allocate a new stream.
+     */
+    @Volatile
+    private var writer: PrintStream? = null
 
     val isAlive: Boolean
         get() = process?.isAlive == true
 
     /**
      * Start the shell process, redirecting combined output to the buffer file.
+     *
+     * Any previous process is terminated first so repeated calls never leak
+     * a running child. When [append] is true the redirect opens the buffer in
+     * append mode, which keeps a later truncation from producing sparse NUL
+     * regions in the file.
      */
-    fun start(command: List<String>, redirect: Boolean): Process {
+    @Synchronized
+    fun start(command: List<String>, append: Boolean): Process {
+        /* Never orphan a child: terminate the previous shell first. */
+        closeWriter()
+        try {
+            process?.destroy()
+        } catch (t: Throwable) {
+            /* Ignore: the process may already be gone. */
+        }
+
         val processBuilder = ProcessBuilder(command)
             .directory(workingDir)
             .apply {
-                if (redirect) {
-                    redirectErrorStream(true)
-                    redirectOutput(outputBufferFile)
-                }
+                redirectErrorStream(true)
+                redirectOutput(
+                    if (append) ProcessBuilder.Redirect.appendTo(outputBufferFile)
+                    else ProcessBuilder.Redirect.to(outputBufferFile)
+                )
 
                 environment().apply {
                     put("HOME", homeDir)
@@ -36,17 +60,23 @@ class ShellSession(
                 }
             }
 
-        return processBuilder.start().also { process = it }
+        return processBuilder.start().also {
+            process = it
+            writer = PrintStream(it.outputStream, true)
+        }
     }
 
     /**
      * Pipe a single line into the shell's stdin.
      */
     fun send(message: String) {
-        val outputStream = process?.outputStream ?: return
-        PrintStream(outputStream).apply {
-            println(message)
-            flush()
+        val stream = writer ?: return
+        try {
+            stream.println(message)
+            stream.flush()
+        } catch (t: Throwable) {
+            /* The shell died between checks; drop the input. */
+            closeWriter()
         }
     }
 
@@ -57,11 +87,41 @@ class ShellSession(
         process?.waitFor()
     }
 
+    /**
+     * Block until the shell process dies or [timeout] elapses.
+     */
+    fun awaitDeath(timeout: Long, unit: TimeUnit) {
+        process?.waitFor(timeout, unit)
+    }
+
     fun destroy() {
-        process?.destroy()
+        closeWriter()
+        try {
+            process?.destroy()
+        } catch (t: Throwable) {
+            /* Ignore: the process may already be gone. */
+        }
     }
 
     fun destroyForcibly() {
-        process?.destroyForcibly()
+        closeWriter()
+        try {
+            process?.destroyForcibly()
+        } catch (t: Throwable) {
+            /* Ignore: the process may already be gone. */
+        }
+    }
+
+    /**
+     * Close the stdin writer. The process reference is kept so that
+     * [awaitDeath] can still observe the terminated child.
+     */
+    private fun closeWriter() {
+        try {
+            writer?.close()
+        } catch (t: Throwable) {
+            /* Ignore */
+        }
+        writer = null
     }
 }

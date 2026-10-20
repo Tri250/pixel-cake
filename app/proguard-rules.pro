@@ -1,21 +1,26 @@
 # Add project specific ProGuard rules here.
 # You can control the set of applied configuration files using the
 # proguardFiles setting in build.gradle.
-#
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# Keep stack traces readable in release builds without shipping the mapping
+# file to every user: class names are stripped, line numbers survive.
+-keepattributes SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# ViewBinding generated classes are inflated by name.
+-keepclassmembers class * implements androidx.viewbinding.ViewBinding {
+    public static *** inflate(android.view.LayoutInflater);
+    public static *** bind(android.view.View);
+}
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Preference fragments are created through the framework.
+-keep class com.draco.ladb.fragments.HelpPreferenceFragment { <init>(); }
+
+# Quick settings tiles are instantiated by the system.
+-keep class com.draco.ladb.services.QSTile { <init>(); }
+
+# ShellSessionState is enum-mirrored into SharedPreferences for the tile.
+-keepclassmembers enum com.draco.ladb.domain.ShellSessionState {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+}

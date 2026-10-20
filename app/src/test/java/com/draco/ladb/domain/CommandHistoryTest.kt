@@ -52,6 +52,41 @@ class CommandHistoryTest {
     }
 
     @Test
+    fun `multi line commands survive serialization`() {
+        val history = CommandHistory()
+        history.record(
+            """
+            for name in *; do
+              echo "found one"
+              ls -l
+            done
+            """.trimIndent()
+        )
+
+        val restored = CommandHistory()
+        restored.load(history.serialize())
+
+        assertEquals(history.all(), restored.all())
+        assertEquals(1, restored.all().size)
+    }
+
+    @Test
+    fun `legacy newline payloads are still readable`() {
+        val restored = CommandHistory()
+        restored.load("ls\npwd\n")
+
+        assertEquals(listOf("ls", "pwd"), restored.all())
+    }
+
+    @Test
+    fun `blank payloads yield empty history`() {
+        val restored = CommandHistory()
+        restored.load("[]")
+
+        assertTrue(restored.isEmpty())
+    }
+
+    @Test
     fun `serialize and load round trip`() {
         val history = CommandHistory()
         history.record("ls -la")

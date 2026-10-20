@@ -1,8 +1,10 @@
 package com.draco.ladb.domain
 
 /**
- * In-memory command history with newline-based serialization suitable for
- * storage inside a single SharedPreferences String entry.
+ * In-memory command history with JSON serialization for durable storage.
+ *
+ * JSON is used instead of a newline-delimited payload so that multi-line
+ * commands survive a round trip intact.
  */
 class CommandHistory(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
 
@@ -11,15 +13,34 @@ class CommandHistory(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
     /**
      * Restore history from a serialized payload. Blank and malformed
      * entries are ignored; at most [maxEntries] newest commands are kept.
+     *
+     * Both the current JSON encoding and the legacy newline-delimited
+     * encoding are accepted so old installs keep their history.
      */
     fun load(serialized: String?) {
         entries.clear()
-        serialized
-            ?.split('\n')
-            ?.map { it.trim() }
-            ?.filter { it.isNotEmpty() }
-            ?.takeLast(maxEntries)
-            ?.forEach { entries.addLast(it) }
+        val payload = serialized ?: return
+        if (payload.isBlank())
+            return
+
+        decodeEntries(payload)
+            .takeLast(maxEntries)
+            .forEach { entries.addLast(it) }
+    }
+
+    private fun decodeEntries(payload: String): List<String> {
+        /* Legacy payloads are plain text; JSON payloads start with '['. */
+        if (payload.trim().startsWith("[")) {
+            val decoded = JsonCodec.decodeStringList(payload)
+            if (decoded.isNotEmpty())
+                return decoded.map { it.trim() }.filter { it.isNotEmpty() }
+            return emptyList()
+        }
+
+        return payload
+            .split('\n')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
     }
 
     /**
@@ -50,7 +71,7 @@ class CommandHistory(private val maxEntries: Int = DEFAULT_MAX_ENTRIES) {
         entries.clear()
     }
 
-    fun serialize(): String = entries.joinToString("\n")
+    fun serialize(): String = JsonCodec.encodeStringList(entries.toList())
 
     companion object {
         const val DEFAULT_MAX_ENTRIES = 50

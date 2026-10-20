@@ -2,20 +2,25 @@ package com.draco.ladb.utils
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ComponentName
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
 import android.provider.Settings
+import android.service.quicksettings.TileService
 import android.util.Log
+import androidx.core.content.edit
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
-import androidx.core.content.edit
 import androidx.preference.PreferenceManager
 import com.draco.ladb.BuildConfig
 import com.draco.ladb.data.SettingsRepository
 import com.draco.ladb.domain.DeviceSelector
+import com.draco.ladb.domain.NativeBinaryCheck
+import com.draco.ladb.domain.NativeBinaryStatus
 import com.draco.ladb.domain.ShellSession
 import com.draco.ladb.domain.ShellSessionState
+import com.draco.ladb.services.QSTile
 import java.io.BufferedReader
 import java.io.File
 import java.io.PrintStream
@@ -23,27 +28,31 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.time.Duration.Companion.seconds
 
-class ADB(private val context: Context) {
+class ADB private constructor(private val context: Context) {
     companion object {
         const val MAX_OUTPUT_BUFFER_SIZE = 1024 * 16
         const val MIN_OUTPUT_BUFFER_SIZE = 1024
         const val MAX_ALLOWED_OUTPUT_BUFFER_SIZE = 1024 * 1024
         const val OUTPUT_BUFFER_DELAY_MS = 100L
+        private const val TAG = "ADB"
         private const val PREF_LAST_ADB_PORT = "last_adb_port"
         private const val PREF_QS_CONNECTED = "qs_connected"
+        private const val BUFFER_FILE_NAME = "ladb_output.txt"
 
         @SuppressLint("StaticFieldLeak")
         @Volatile
         private var instance: ADB? = null
+
         fun getInstance(context: Context): ADB = instance ?: synchronized(this) {
-            instance ?: ADB(context).also { instance = it }
+            /* Always pin the application context: a caller may hand us an
+               activity or a fragment context. */
+            instance ?: ADB(context.applicationContext).also { instance = it }
         }
     }
 
     private val sharedPrefs = PreferenceManager.getDefaultSharedPreferences(context)
 
     private val adbPath = "${context.applicationInfo.nativeLibraryDir}/libadb.so"
-    private val scriptPath = "${context.getExternalFilesDir(null)}/script.sh"
 
     /**
      * Is the shell ready to handle commands?
@@ -61,8 +70,16 @@ class ADB(private val context: Context) {
         _state.postValue(value)
 
         /* Mirror the connection state for the quick settings tile */
-        sharedPrefs.edit {
-            putBoolean(PREF_QS_CONNECTED, value == ShellSessionState.READY)
+        try {
+            sharedPrefs.edit {
+                putBoolean(PREF_QS_CONNECTED, value == ShellSessionState.READY)
+            }
+            TileService.requestListeningState(
+                context,
+                ComponentName(context, QSTile::class.java)
+            )
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to refresh quick settings tile", t)
         }
     }
 
@@ -96,11 +113,10 @@ class ADB(private val context: Context) {
     private val settings = SettingsRepository.getInstance(context)
 
     /**
-     * Where shell output is stored
+     * Where shell output is stored. Lives in the app cache so it is shareable
+     * through FileProvider and reclaimed on uninstall.
      */
-    val outputBufferFile: File = File.createTempFile("buffer", ".txt").also {
-        it.deleteOnExit()
-    }
+    val outputBufferFile: File = File(context.cacheDir, BUFFER_FILE_NAME)
 
     /**
      * The interactive shell process (lifecycle owned by ShellSession)
@@ -111,6 +127,12 @@ class ADB(private val context: Context) {
         tmpDir = context.cacheDir.path,
         outputBufferFile = outputBufferFile
     )
+
+    /**
+     * Arguments of the last shell invocation, reused by [restartShell].
+     */
+    @Volatile
+    private var lastShellArgs: List<String> = listOf("shell")
 
     /**
      * Returns the user buffer size if valid, else the default. The value is
@@ -128,40 +150,44 @@ class ADB(private val context: Context) {
     }
 
     /**
-     * Get a list of connected devices.
+     * Get a list of connected devices. Never throws; returns an empty list
+     * when the command times out or cannot run.
      */
     fun getDevices(): List<String> {
-        val devicesProcess = adb(false, listOf("devices"))
-        if (!devicesProcess.waitFor(10, TimeUnit.SECONDS))
+        val devicesProcess = try {
+            adb(false, listOf("devices"))
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to run adb devices", t)
+            return emptyList()
+        }
+
+        return try {
+            if (!devicesProcess.waitFor(10, TimeUnit.SECONDS))
+                devicesProcess.destroyForcibly()
+
+            /* Get result of the command. */
+            val linesRaw = BufferedReader(devicesProcess.inputStream.reader()).use {
+                it.readLines()
+            }
+
+            /* Remove "List of devices attached" line if it exists (it should). */
+            linesRaw
+                .filterNot { it.contains("List of devices attached") }
+                .map { it.split("\t").first() }
+                .filter { it.isNotEmpty() }
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to read adb devices", t)
+            emptyList()
+        } finally {
             devicesProcess.destroyForcibly()
-
-        /* Get result of the command. */
-        val linesRaw = BufferedReader(devicesProcess.inputStream.reader()).readLines()
-
-        /* Remove "List of devices attached" line if it exists (it should). */
-        val deviceLines = linesRaw.filterNot { it ->
-            it.contains("List of devices attached")
         }
-
-        /* Just get first part with device name/IP and port. */
-        var deviceNames = deviceLines.map { it ->
-            it.split("\t").first()
-        }
-
-        /* Remove any empty lines. */
-        deviceNames = deviceNames.filterNot { it ->
-            it.isEmpty()
-        }
-
-        for (name in deviceNames) {
-            Log.d("LINES", "<<<$name>>>")
-        }
-
-        return deviceNames
     }
 
     /**
-     * Start the ADB server
+     * Start the ADB server.
+     *
+     * Never throws: every failure is reported through [debug] and the return
+     * value so a broken environment cannot take the process down.
      */
     fun initServer(): Boolean {
         synchronized(this) {
@@ -172,12 +198,26 @@ class ADB(private val context: Context) {
             tryingToPair = true
         }
 
+        return try {
+            initServerInternal()
+        } catch (t: Throwable) {
+            Log.e(TAG, "ADB server failed to start", t)
+            debug("ADB failed to start: ${t.message ?: t::class.java.simpleName}")
+            setState(ShellSessionState.DEAD)
+            _running.postValue(false)
+            tryingToPair = false
+            false
+        }
+    }
+
+    private fun initServerInternal(): Boolean {
         val autoShell = settings.blockingAutoShell()
 
-        val secureSettingsGranted =
-            context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+        val secureSettingsGranted = hasSecureSettingsPermission()
 
         if (autoShell) {
+            reportNativeBinaryHealth()
+
             if (tryConnectCachedPort()) {
                 /* Previous connection still valid; skip discovery entirely. */
                 debug("Reusing previous connection...")
@@ -189,13 +229,10 @@ class ADB(private val context: Context) {
                         cycleWirelessDebugging()
                     } else if (!isUSBDebuggingEnabled()) {
                         debug("Turning on USB debugging...")
-                        Settings.Global.putInt(
-                            context.contentResolver,
-                            Settings.Global.ADB_ENABLED,
-                            1
-                        )
+                        writeGlobalSetting(Settings.Global.ADB_ENABLED, 1)
 
-                        Thread.sleep(5_000)
+                        if (!sleepInterruptible(5_000))
+                            return false
                     }
                 }
 
@@ -207,7 +244,8 @@ class ADB(private val context: Context) {
                         debug("Waiting for wireless debugging...")
 
                         while (!isWirelessDebuggingEnabled()) {
-                            Thread.sleep(1_000)
+                            if (!sleepInterruptible(1_000))
+                                return false
                         }
                     }
                 } else {
@@ -217,16 +255,18 @@ class ADB(private val context: Context) {
                         debug("Waiting for USB debugging...")
 
                         while (!isUSBDebuggingEnabled()) {
-                            Thread.sleep(1_000)
+                            if (!sleepInterruptible(1_000))
+                                return false
                         }
                     }
                 }
 
                 setState(ShellSessionState.DISCOVERING)
 
-                val nowTime = System.currentTimeMillis()
-                val maxTimeoutTime = nowTime + 10.seconds.inWholeMilliseconds
-                val minDnsScanTime = (DnsDiscover.aliveTime ?: nowTime) + 3.seconds.inWholeMilliseconds
+                val startTime = System.currentTimeMillis()
+                val maxTimeoutTime = startTime + 10.seconds.inWholeMilliseconds
+                val minDnsScanTime =
+                    (DnsDiscover.aliveTime ?: startTime) + 3.seconds.inWholeMilliseconds
                 while (true) {
                     val nowTime = System.currentTimeMillis()
                     val pendingResolves = DnsDiscover.pendingResolves.get()
@@ -245,7 +285,8 @@ class ADB(private val context: Context) {
 
                     debug("Awaiting DNS resolver...")
 
-                    Thread.sleep(1_000)
+                    if (!sleepInterruptible(1_000))
+                        return false
                 }
 
                 val adbPort = DnsDiscover.adbPort
@@ -270,7 +311,7 @@ class ADB(private val context: Context) {
 
                     if (isMobileDataAlwaysOnEnabled()) {
                         debug("Please disable 'Mobile data always on' in Developer Settings!")
-                        Thread.sleep(5_000)
+                        sleepInterruptible(5_000)
                     }
 
                     tryingToPair = false
@@ -284,25 +325,29 @@ class ADB(private val context: Context) {
         }
 
         val deviceList = getDevices()
-        Log.d("DEVICES", "Devices: $deviceList")
+        Log.d(TAG, "Devices: $deviceList")
 
         val argList = if (autoShell) {
-            /* Uh oh, multiple possible devices... */
-            if (deviceList.size > 1) {
-                Log.w("DEVICES", "Multiple devices detected...")
+            when {
+                deviceList.isEmpty() -> {
+                    debug("No ADB devices found; falling back to a local shell")
+                    listOf("sh", "-l")
+                }
+                deviceList.size > 1 -> {
+                    Log.w(TAG, "Multiple devices detected...")
 
-                /* Choose the best candidate (local -> non-emulator -> first). */
-                val serialId = DeviceSelector.selectSerial(deviceList)!!
-                Log.w("DEVICES", "Choosing device: $serialId")
-                listOf("-s", serialId, "shell")
-            } else {
-                listOf("shell")
+                    /* Choose the best candidate (local -> non-emulator -> first). */
+                    val serialId = DeviceSelector.selectSerial(deviceList) ?: deviceList.first()
+                    Log.w(TAG, "Choosing device: $serialId")
+                    listOf("-s", serialId, "shell")
+                }
+                else -> listOf("shell")
             }
         } else {
             listOf("sh", "-l")
         }
 
-        shellSession.start(listOf(adbPath) + argList, redirect = true)
+        startShell(argList)
 
         sendToShellProcess("alias adb=\"$adbPath\"")
 
@@ -310,7 +355,7 @@ class ADB(private val context: Context) {
             sendToShellProcess("pm grant ${BuildConfig.APPLICATION_ID} android.permission.WRITE_SECURE_SETTINGS &> /dev/null")
         }
 
-        if (autoShell)
+        if (argList.lastOrNull() == "shell")
             sendToShellProcess("echo 'Entered adb shell'")
         else
             sendToShellProcess("echo 'Entered non-adb shell'")
@@ -327,6 +372,72 @@ class ADB(private val context: Context) {
     }
 
     /**
+     * Start (or restart) the interactive shell, truncating the output buffer
+     * while no process owns it. The redirect is opened in append mode so a
+     * later buffer clear cannot turn the file into a sparse binary full of
+     * NUL bytes.
+     */
+    private fun startShell(argList: List<String>) {
+        lastShellArgs = argList
+        synchronized(outputBufferFile) {
+            runCatching { outputBufferFile.writeText("") }
+        }
+        shellSession.start(listOf(adbPath) + argList, append = true)
+    }
+
+    /**
+     * Drop the current shell and bring up a fresh one on the same target.
+     */
+    fun restartShell(): Boolean {
+        val args = lastShellArgs
+        return try {
+            shellSession.destroy()
+            shellSession.awaitDeath(1, TimeUnit.SECONDS)
+            startShell(args)
+            true
+        } catch (t: Throwable) {
+            Log.e(TAG, "Unable to restart the shell", t)
+            debug("Shell restart failed: ${t.message ?: t::class.java.simpleName}")
+            false
+        }
+    }
+
+    /**
+     * Validate the bundled ADB binary before it is executed so an
+     * incompatible build (e.g. 4 KB segments on a 16 KB page kernel) is
+     * reported instead of producing a silent launch failure.
+     */
+    private fun reportNativeBinaryHealth() {
+        val status = NativeBinaryCheck.validate(File(adbPath), devicePageSize())
+        when (status) {
+            is NativeBinaryStatus.Ok -> Unit
+            is NativeBinaryStatus.Unusable -> {
+                Log.e(TAG, status.reason)
+                debug("ADB binary unusable: ${status.reason}")
+            }
+            is NativeBinaryStatus.PageSizeMismatch -> {
+                Log.e(
+                    TAG,
+                    "ADB binary alignment ${status.alignment} is smaller than the " +
+                        "device page size ${status.pageSize}"
+                )
+                debug("This device uses ${status.pageSize / 1024} KB memory pages.")
+                debug("The bundled ADB binary is only ${status.alignment / 1024} KB aligned.")
+                debug("Rebuild libadb.so with -Wl,-z,max-page-size=16384 to run here.")
+            }
+        }
+    }
+
+    private fun devicePageSize(): Int {
+        return try {
+            android.system.Os.sysconf(android.system.OsConstants._SC_PAGESIZE).toInt()
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to query the page size", t)
+            0
+        }
+    }
+
+    /**
      * Attempt to reconnect using the previously successful port, skipping
      * the slower wireless-debugging discovery path.
      */
@@ -334,8 +445,13 @@ class ADB(private val context: Context) {
         val lastPort = sharedPrefs.getString(PREF_LAST_ADB_PORT, null) ?: return false
 
         debug("Trying cached ADB port $lastPort...")
-        adb(false, listOf("start-server")).waitFor(1, TimeUnit.MINUTES)
-        adb(false, listOf("connect", "localhost:$lastPort")).waitFor(15, TimeUnit.SECONDS)
+        try {
+            adb(false, listOf("start-server")).waitFor(1, TimeUnit.MINUTES)
+            adb(false, listOf("connect", "localhost:$lastPort")).waitFor(15, TimeUnit.SECONDS)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Cached port connect failed", t)
+            return false
+        }
 
         val connected = getDevices().any { it.contains("localhost") }
         if (!connected) {
@@ -369,20 +485,14 @@ class ADB(private val context: Context) {
      * with the DNS resolver.
      */
     fun disableMobileDataAlwaysOn() {
-        val secureSettingsGranted =
-            context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+        if (!hasSecureSettingsPermission())
+            return
 
-        if (secureSettingsGranted) {
-            // Only turn it off if it's already on.
-            if (isMobileDataAlwaysOnEnabled()) {
-                debug("Disabling 'Mobile data always on'...")
-                Settings.Global.putInt(
-                    context.contentResolver,
-                    "mobile_data_always_on",
-                    0
-                )
-                Thread.sleep(3_000)
-            }
+        // Only turn it off if it's already on.
+        if (isMobileDataAlwaysOnEnabled()) {
+            debug("Disabling 'Mobile data always on'...")
+            writeGlobalSetting("mobile_data_always_on", 0)
+            sleepInterruptible(3_000)
         }
     }
 
@@ -393,47 +503,42 @@ class ADB(private val context: Context) {
      * cycled twice to broadcast a valid port.
      */
     fun cycleWirelessDebugging() {
-        val secureSettingsGranted =
-            context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) == PackageManager.PERMISSION_GRANTED
+        if (!hasSecureSettingsPermission())
+            return
 
-        if (secureSettingsGranted) {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-                debug("Cycling wireless debugging, please wait...")
-                // Only turn it off if it's already on.
-                if (isWirelessDebuggingEnabled()) {
-                    debug("Turning off wireless debugging...")
-                    Settings.Global.putInt(
-                        context.contentResolver,
-                        "adb_wifi_enabled",
-                        0
-                    )
-                    Thread.sleep(3_000)
-                }
-
-                debug("Turning on wireless debugging...")
-                Settings.Global.putInt(
-                    context.contentResolver,
-                    "adb_wifi_enabled",
-                    1
-                )
-                Thread.sleep(3_000)
-
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
+            debug("Cycling wireless debugging, please wait...")
+            // Only turn it off if it's already on.
+            if (isWirelessDebuggingEnabled()) {
                 debug("Turning off wireless debugging...")
-                Settings.Global.putInt(
-                    context.contentResolver,
-                    "adb_wifi_enabled",
-                    0
-                )
-                Thread.sleep(3_000)
-
-                debug("Turning on wireless debugging...")
-                Settings.Global.putInt(
-                    context.contentResolver,
-                    "adb_wifi_enabled",
-                    1
-                )
-                Thread.sleep(3_000)
+                writeGlobalSetting("adb_wifi_enabled", 0)
+                sleepInterruptible(3_000)
             }
+
+            debug("Turning on wireless debugging...")
+            writeGlobalSetting("adb_wifi_enabled", 1)
+            sleepInterruptible(3_000)
+
+            debug("Turning off wireless debugging...")
+            writeGlobalSetting("adb_wifi_enabled", 0)
+            sleepInterruptible(3_000)
+
+            debug("Turning on wireless debugging...")
+            writeGlobalSetting("adb_wifi_enabled", 1)
+            sleepInterruptible(3_000)
+        }
+    }
+
+    private fun hasSecureSettingsPermission() =
+        context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS) ==
+            PackageManager.PERMISSION_GRANTED
+
+    private fun writeGlobalSetting(key: String, value: Int) {
+        try {
+            Settings.Global.putInt(context.contentResolver, key, value)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to write $key", t)
+            debug("Missing permission to change '$key'; grant WRITE_SECURE_SETTINGS with adb.")
         }
     }
 
@@ -441,11 +546,12 @@ class ADB(private val context: Context) {
      * Wait restart the shell once it dies
      */
     fun waitForDeathAndReset() {
-        while (true) {
+        while (!Thread.currentThread().isInterrupted) {
             /* Do not falsely claim the shell is dead if we haven't even initialized it yet */
             if (tryingToPair) {
                 /* Avoid busy-waiting while pairing is in progress */
-                Thread.sleep(1_000)
+                if (!sleepInterruptible(1_000))
+                    return
                 continue
             }
 
@@ -457,16 +563,29 @@ class ADB(private val context: Context) {
                 return
             }
 
+            if (Thread.currentThread().isInterrupted)
+                return
+
             setState(ShellSessionState.DEAD)
             _running.postValue(false)
             debug("Shell is dead, resetting...")
-            adb(false, listOf("kill-server")).let {
-                if (!it.waitFor(5, TimeUnit.SECONDS))
-                    it.destroyForcibly()
+            try {
+                adb(false, listOf("kill-server")).let {
+                    if (!it.waitFor(5, TimeUnit.SECONDS))
+                        it.destroyForcibly()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "kill-server failed", t)
             }
 
-            Thread.sleep(3_000)
-            initServer()
+            if (!sleepInterruptible(3_000))
+                return
+
+            try {
+                initServer()
+            } catch (t: Throwable) {
+                Log.e(TAG, "Auto reset failed", t)
+            }
         }
     }
 
@@ -475,26 +594,37 @@ class ADB(private val context: Context) {
      */
     fun pair(port: String, pairingCode: String): Boolean {
         setState(ShellSessionState.PAIRING)
-        val pairShell = adb(false, listOf("pair", "localhost:$port"))
 
-        /* Sleep to allow shell to catch up */
-        Thread.sleep(5000)
+        return try {
+            val pairShell = adb(false, listOf("pair", "localhost:$port"))
 
-        /* Pipe pairing code */
-        PrintStream(pairShell.outputStream).apply {
-            println(pairingCode)
-            flush()
+            /* Sleep to allow shell to catch up */
+            sleepInterruptible(5_000)
+
+            /* Pipe pairing code */
+            PrintStream(pairShell.outputStream).use {
+                it.println(pairingCode)
+                it.flush()
+            }
+
+            /* Continue once finished pairing (or 10s elapses) */
+            pairShell.waitFor(10, TimeUnit.SECONDS)
+            pairShell.destroyForcibly().waitFor()
+
+            val killShell = adb(false, listOf("kill-server"))
+            killShell.waitFor(3, TimeUnit.SECONDS)
+            killShell.destroyForcibly()
+
+            val exit = try {
+                pairShell.exitValue()
+            } catch (_: IllegalThreadStateException) {
+                -1
+            }
+            exit == 0
+        } catch (t: Throwable) {
+            Log.e(TAG, "Pairing failed", t)
+            false
         }
-
-        /* Continue once finished pairing (or 10s elapses) */
-        pairShell.waitFor(10, TimeUnit.SECONDS)
-        pairShell.destroyForcibly().waitFor()
-
-        val killShell = adb(false, listOf("kill-server"))
-        killShell.waitFor(3, TimeUnit.SECONDS)
-        killShell.destroyForcibly()
-
-        return pairShell.exitValue() == 0
     }
 
     /**
@@ -525,14 +655,18 @@ class ADB(private val context: Context) {
                 }
             }
 
-        return processBuilder.start()!!
+        return processBuilder.start()
     }
 
     /**
      * Send commands directly to the shell process
      */
     fun sendToShellProcess(msg: String) {
-        shellSession.send(msg)
+        try {
+            shellSession.send(msg)
+        } catch (t: Throwable) {
+            Log.w(TAG, "Unable to send command to the shell", t)
+        }
     }
 
     /**
@@ -551,9 +685,13 @@ class ADB(private val context: Context) {
         Thread {
             shellSession.destroy()
 
-            adb(false, listOf("kill-server")).let {
-                if (!it.waitFor(5, TimeUnit.SECONDS))
-                    it.destroyForcibly()
+            try {
+                adb(false, listOf("kill-server")).let {
+                    if (!it.waitFor(5, TimeUnit.SECONDS))
+                        it.destroyForcibly()
+                }
+            } catch (t: Throwable) {
+                Log.w(TAG, "kill-server failed", t)
             }
         }.apply { isDaemon = true }.start()
     }
@@ -563,9 +701,29 @@ class ADB(private val context: Context) {
      */
     fun debug(msg: String) {
         synchronized(outputBufferFile) {
-            Log.d("DEBUG", msg)
-            if (outputBufferFile.exists())
-                outputBufferFile.appendText("* $msg" + System.lineSeparator())
+            Log.d(TAG, msg)
+            try {
+                if (outputBufferFile.exists())
+                    outputBufferFile.appendText("* $msg" + System.lineSeparator())
+            } catch (t: Throwable) {
+                Log.w(TAG, "Unable to write debug output", t)
+            }
+        }
+    }
+
+    /**
+     * Sleep that honours interruption so cancelled work stops immediately
+     * instead of finishing a minute-long wait.
+     *
+     * @return false when the thread was interrupted.
+     */
+    private fun sleepInterruptible(ms: Long): Boolean {
+        return try {
+            Thread.sleep(ms)
+            !Thread.currentThread().isInterrupted
+        } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
         }
     }
 }

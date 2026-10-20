@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Key/value backup descriptor for Android 11 (API 30) and older. -->
+<full-backup-content>
+    <!-- Persisted settings, bookmarks and pairing profiles. -->
+    <include domain="file" path="datastore" />
+    <include domain="sharedpref" path="." />
+    <!-- Transient shell output lives in the cache and is not restored. -->
+</full-backup-content>

@@ -3,24 +3,23 @@ package com.draco.ladb.views
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
 import android.view.Menu
 import android.view.MenuItem
-import android.view.ViewGroup
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.appcompat.app.AppCompatActivity
-import androidx.core.view.ViewCompat
 import androidx.core.view.WindowCompat
-import androidx.core.view.WindowInsetsCompat
-import androidx.core.view.updateLayoutParams
 import androidx.recyclerview.widget.DefaultItemAnimator
 import com.draco.ladb.R
 import com.draco.ladb.databinding.ActivityBookmarksBinding
 import com.draco.ladb.domain.JsonCodec
+import com.draco.ladb.utils.EdgeToEdgeUtil
 import com.draco.ladb.utils.ThemeUtil
 import com.draco.ladb.viewmodels.BookmarksActivityViewModel
 import com.google.android.material.snackbar.Snackbar
+import java.nio.charset.StandardCharsets
 
 class BookmarksActivity : AppCompatActivity() {
     private val viewModel: BookmarksActivityViewModel by viewModels()
@@ -46,25 +45,8 @@ class BookmarksActivity : AppCompatActivity() {
         binding = ActivityBookmarksBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        /* Fix stupid Google edge-to-edge bullshit */
-        ViewCompat.setOnApplyWindowInsetsListener(binding.content) { v, windowInsets ->
-            val systemBarsInsets = windowInsets.getInsets(WindowInsetsCompat.Type.systemBars())
-            val statusBarInsets = windowInsets.getInsets(WindowInsetsCompat.Type.statusBars())
-            windowInsets.getInsets(WindowInsetsCompat.Type.statusBars())
-
-            v.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                leftMargin = systemBarsInsets.left
-                bottomMargin = systemBarsInsets.bottom
-                rightMargin = systemBarsInsets.right
-                topMargin = systemBarsInsets.top
-            }
-            binding.statusBarBackground.updateLayoutParams {
-                height = statusBarInsets.top
-            }
-
-            WindowInsetsCompat.CONSUMED
-        }
-        supportActionBar!!.elevation = 0f
+        EdgeToEdgeUtil.applyInsets(binding.content, binding.statusBarBackground)
+        supportActionBar?.elevation = 0f
         WindowCompat.getInsetsController(window, window.decorView)
             .isAppearanceLightStatusBars = false
 
@@ -113,36 +95,46 @@ class BookmarksActivity : AppCompatActivity() {
 
     private fun exportBookmarks(uri: Uri) {
         try {
+            val payload = JsonCodec.encodeStringList(viewModel.recyclerAdapter.snapshot())
             contentResolver.openOutputStream(uri)?.use { stream ->
-                stream.write(JsonCodec.encodeStringList(viewModel.recyclerAdapter.snapshot()).toByteArray())
-            }
+                stream.write(payload.toByteArray(StandardCharsets.UTF_8))
+            } ?: throw IllegalArgumentException("Unable to open the destination file")
+
             Snackbar.make(binding.recycler, R.string.export_success, Snackbar.LENGTH_SHORT).show()
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w(TAG, "Bookmark export failed", e)
             Snackbar.make(binding.recycler, R.string.export_failed, Snackbar.LENGTH_SHORT).show()
         }
     }
 
     private fun importBookmarks(uri: Uri) {
-        try {
+        val entries = try {
             val json = contentResolver.openInputStream(uri)
                 ?.use { it.readBytes().decodeToString() }
                 ?: ""
 
-            val entries = JsonCodec.decodeStringList(json)
-            if (entries.isEmpty())
-                throw IllegalArgumentException("No bookmarks found in file")
-
-            viewModel.importBookmarks(entries)
-            Snackbar.make(binding.recycler, R.string.import_success, Snackbar.LENGTH_SHORT).show()
+            JsonCodec.decodeStringList(json)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Log.w(TAG, "Bookmark import failed", e)
             Snackbar.make(binding.recycler, R.string.import_failed, Snackbar.LENGTH_SHORT).show()
+            return
         }
+
+        if (entries.isEmpty()) {
+            Snackbar.make(binding.recycler, R.string.import_failed, Snackbar.LENGTH_SHORT).show()
+            return
+        }
+
+        /* Import replaces everything, so confirm before losing the list. */
+        viewModel.areYouSureImport(this, entries.size) { viewModel.importBookmarks(entries) }
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.bookmarks, menu)
         return true
+    }
+
+    private companion object {
+        const val TAG = "BookmarksActivity"
     }
 }

@@ -5,8 +5,9 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
+import android.os.Handler
+import android.os.Looper
 import android.util.Log
-import com.draco.ladb.utils.DnsDiscover.Companion.adbPort
 import java.net.Inet4Address
 import java.net.NetworkInterface
 import java.text.SimpleDateFormat
@@ -26,6 +27,18 @@ class DnsDiscover private constructor(
     private var pendingServices: MutableList<NsdServiceInfo> = Collections.synchronizedList(ArrayList())
 
     /**
+     * Local address cache. Resolving it walks every interface, and the
+     * resolver callback fires for each discovered service.
+     */
+    @Volatile
+    private var cachedLocalIp: String? = null
+
+    @Volatile
+    private var cachedLocalIpAt = 0L
+
+    private val mainHandler = Handler(Looper.getMainLooper())
+
+    /**
      * When true, services announced from a different IP address are ignored.
      * Disabled by default for TV and multi-NAT compatibility.
      */
@@ -33,13 +46,23 @@ class DnsDiscover private constructor(
     var strictIpCheck: Boolean = false
 
     companion object {
+        private const val LOCAL_IP_CACHE_MS = 10_000L
+        private const val RESOLVE_RETRY_DELAY_MS = 1_000L
+
         private var instance: DnsDiscover? = null
+
+        @Volatile
         var adbPort: Int? = null
-        var pendingResolves = AtomicBoolean(false)
+
+        val pendingResolves = AtomicBoolean(false)
+
+        @Volatile
         var aliveTime: Long? = null
 
         fun getInstance(context: Context, nsdManager: NsdManager): DnsDiscover {
-            return instance ?: DnsDiscover(context, nsdManager).also { instance = it }
+            return instance ?: synchronized(this) {
+                instance ?: DnsDiscover(context.applicationContext, nsdManager).also { instance = it }
+            }
         }
     }
 
@@ -64,13 +87,20 @@ class DnsDiscover private constructor(
      * Returns the device's local IP address, or null if an error occurred.
      */
     fun getLocalIpAddress(): String? {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val now = System.currentTimeMillis()
+        cachedLocalIp?.let {
+            if (now - cachedLocalIpAt < LOCAL_IP_CACHE_MS)
+                return it
+        }
+
+        val connectivityManager =
+            context.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager
+                ?: return null
         val network = connectivityManager.activeNetwork ?: return null
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return null
 
         // Ensure it's a valid Wi-Fi connection
         if (capabilities.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)) {
-
             try {
                 val interfaces = NetworkInterface.getNetworkInterfaces()
                 while (interfaces.hasMoreElements()) {
@@ -80,7 +110,10 @@ class DnsDiscover private constructor(
                     while (addresses.hasMoreElements()) {
                         val inetAddress = addresses.nextElement()
                         if (!inetAddress.isLoopbackAddress && inetAddress is Inet4Address) {
-                            return inetAddress.hostAddress
+                            val address = inetAddress.hostAddress
+                            cachedLocalIp = address
+                            cachedLocalIpAt = now
+                            return address
                         }
                     }
                 }
@@ -179,8 +212,8 @@ class DnsDiscover private constructor(
         val ipAddress = getLocalIpAddress()
         Log.d("IP ADDRESS", ipAddress ?: "N/A")
 
-        val discoveredAddress = serviceInfo.host.hostAddress
-        if (ipAddress != null && discoveredAddress != ipAddress) {
+        val discoveredAddress = runCatching { serviceInfo.host?.hostAddress }.getOrNull()
+        if (ipAddress != null && discoveredAddress != null && discoveredAddress != ipAddress) {
             if (strictIpCheck) {
                 Log.d(TAG, "IP does not match device, skipping (strict IP check)...")
                 return
@@ -207,29 +240,39 @@ class DnsDiscover private constructor(
 
                 when (errorCode) {
                     NsdManager.FAILURE_ALREADY_ACTIVE -> {
-                        // Re-run the resolve until it resolves.
-                        resolveService(serviceInfo)
+                        /* Back off instead of spinning: an immediate retry
+                           against an in-flight resolve busy-loops and can
+                           overflow the stack through recursion. */
+                        mainHandler.postDelayed({
+                            resolveService(serviceInfo)
+                        }, RESOLVE_RETRY_DELAY_MS)
                     }
+                    else -> clearPending(serviceInfo)
                 }
             }
 
             override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
                 handleResolvedService(serviceInfo)
-
-                // Remove service after it's been resolved.
-                pendingServices.removeAll { it.serviceName == serviceInfo.serviceName }
-
-                // If we're all done, let anyone waiting know.
-                if (pendingServices.isEmpty()) {
-                    pendingResolves.set(false)
-                }
-
-                Log.d(TAG, "Service resolved, pending: ${pendingServices.size}")
+                clearPending(serviceInfo)
             }
         }
 
         // Resolve service with listener.
         nsdManager.resolveService(service, resolveListener)
+    }
+
+    /**
+     * Drop a service from the pending set and release the latch when the
+     * queue drains.
+     */
+    private fun clearPending(serviceInfo: NsdServiceInfo) {
+        synchronized(pendingServices) {
+            pendingServices.removeAll { it.serviceName == serviceInfo.serviceName }
+            if (pendingServices.isEmpty())
+                pendingResolves.set(false)
+        }
+
+        Log.d(TAG, "Service resolved, pending: ${pendingServices.size}")
     }
 
     val discoveryListener = object : NsdManager.DiscoveryListener {
@@ -241,7 +284,9 @@ class DnsDiscover private constructor(
             Log.d(TAG, "Service discovery: $service")
             Log.d(TAG, "Port: ${service.port}")
 
-            pendingServices.add(service)
+            synchronized(pendingServices) {
+                pendingServices.add(service)
+            }
             pendingResolves.set(true)
             Log.d(TAG, "Service found, pending: ${pendingServices.size}")
 
@@ -258,13 +303,18 @@ class DnsDiscover private constructor(
 
         override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
             Log.e(TAG, "Discovery failed: Error code:$errorCode")
-            nsdManager.stopServiceDiscovery(this)
+            try {
+                nsdManager.stopServiceDiscovery(this)
+            } catch (t: Throwable) {
+                Log.w(TAG, "Unable to stop discovery", t)
+            }
+            pendingResolves.set(false)
+            started = false
         }
 
         override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
             Log.e(TAG, "Discovery failed: Error code:$errorCode")
-            nsdManager.stopServiceDiscovery(this)
+            pendingResolves.set(false)
         }
     }
-
 }
