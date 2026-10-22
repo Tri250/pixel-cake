@@ -15,8 +15,13 @@ const security = require(path.join(runtime, 'out/utils/webview-security'));
 const origin = 'https://ui-brand.vscode-cdn.net';
 const mappedUrl = filename => origin + '/' + path.resolve(filename).split(/[\\/]/).map(encodeURIComponent).join('/');
 const html = fs.readFileSync(path.join(runtime, 'media/editor.html'), 'utf8');
-const icon = fs.readFileSync(path.join(runtime, 'resources/icon.png'));
+const manifest = JSON.parse(fs.readFileSync(path.join(runtime, 'package.json'), 'utf8'));
+assert.equal(manifest.icon, 'resources/icon.png', 'manifest and webview use the same brand resource');
+const icon = fs.readFileSync(path.join(runtime, manifest.icon));
+assert.ok(icon.length <= 1024 * 1024,
+  `manifest icon must not exceed the Marketplace 1024 KB limit (actual: ${icon.length} bytes)`);
 assert.deepEqual(icon.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]), 'brand resource is a packaged PNG');
+assert.ok(icon.length >= 24, 'brand PNG includes its dimension header');
 assert.ok(icon.readUInt32BE(16) > 0 && icon.readUInt32BE(20) > 0, 'brand PNG has nonempty dimensions');
 
 function render(extensionPath, contents) {
@@ -55,4 +60,4 @@ for (const extensionPath of [runtime, runtime + path.sep]) {
   assert.ok(probe.includes('src="' + mappedUrl(path.join(extensionPath, 'resources')) + '/probe.png"'), 'image mapping keeps the same safe resource root');
 }
 
-console.log('ui-brand-resource.test.js: PASS (compiled provider, packaged icon, resource separators, CSP and nonce)');
+console.log('ui-brand-resource.test.js: PASS (compiled provider, manifest PNG within 1024 KB, resource separators, CSP and nonce)');

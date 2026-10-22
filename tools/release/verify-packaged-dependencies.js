@@ -56,6 +56,23 @@ function isPathInside(root, candidate) {
     && !relative.startsWith(`..${path.sep}`));
 }
 
+function verifyMarketplaceIcon(root, manifest) {
+  assert.ok(typeof manifest.icon === 'string' && manifest.icon.length > 0,
+    'Packaged manifest must identify the Marketplace icon');
+  const iconPath = path.resolve(root, manifest.icon);
+  assert.ok(isPathInside(path.resolve(root), iconPath), 'Marketplace icon must stay inside the packaged root');
+  const icon = fs.readFileSync(iconPath);
+  assert.ok(icon.length <= 1024 * 1024,
+    `Marketplace icon must not exceed 1024 KB (actual: ${icon.length} bytes)`);
+  assert.deepEqual(icon.subarray(0, 8), Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]),
+    'Packaged Marketplace icon must be a PNG');
+  assert.ok(icon.length >= 24, 'Packaged Marketplace PNG must include its dimension header');
+  const width = icon.readUInt32BE(16);
+  const height = icon.readUInt32BE(20);
+  assert.ok(width > 0 && height > 0, 'Packaged Marketplace PNG dimensions must be nonempty');
+  return { bytes: icon.length, width, height };
+}
+
 function packagedRelative(root, absolute) {
   return path.relative(root, absolute).replaceAll('\\', '/');
 }
@@ -223,6 +240,8 @@ async function main() {
   const sourcePackage = JSON.parse(fs.readFileSync(sourceManifest, 'utf8'));
   const packagedPackage = JSON.parse(fs.readFileSync(packagedManifest, 'utf8'));
   assert.equal(packagedPackage.version, sourcePackage.version);
+  assert.equal(packagedPackage.icon, sourcePackage.icon, 'Packaged manifest icon must match the source manifest');
+  const marketplaceIcon = verifyMarketplaceIcon(packagedRoot, packagedPackage);
   verifyRequiredPackagedFiles(
     packagedRoot,
     ['readme.md', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.md'],
@@ -304,7 +323,8 @@ async function main() {
   }
 
   console.log(`Packaged runtime verification passed: ${packageCount} production packages, `
-    + `Ctrl+F12 ${npcDialogModuleFiles.length}-file local closure, SQL.js, XLS, Tabulator, native M2.`);
+    + `Ctrl+F12 ${npcDialogModuleFiles.length}-file local closure, SQL.js, XLS, Tabulator, native M2, `
+    + `Marketplace icon ${marketplaceIcon.width}x${marketplaceIcon.height}/${marketplaceIcon.bytes} bytes.`);
 }
 
 if (require.main === module) {
@@ -317,6 +337,7 @@ if (require.main === module) {
 module.exports = {
   REQUIRED_NPC_DIALOG_DYNAMIC_ENTRY_FILES,
   REQUIRED_NPC_DIALOG_RUNTIME_FILES,
+  verifyMarketplaceIcon,
   verifyLocalModuleClosure,
   verifyRequiredPackagedFiles,
 };
