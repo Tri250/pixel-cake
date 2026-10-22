@@ -2,6 +2,7 @@
 .vscode-test/**
 .pytest_cache/**
 test-artifacts/**
+热血传奇策划/**
 .eslintcache
 eslint.config.*
 tests/**
@@ -87,6 +88,7 @@ artifacts/**
 tools/**
 !tools/PakBridge/bin/**
 !tools/M2Reloader/runtime/native-win-x64/**
+!tools/AccessBridge/access-bridge.ps1
 data/md-export/**
 data/audit-report/**
 data/backup-*/**

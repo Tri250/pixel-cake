@@ -92,9 +92,9 @@ function main() {
       return { values: ['神剑|501', '神甲|502'], complete: true };
     },
   });
-  assert.deepEqual(flagsAt(dynamicTarget, 6).flags, ['[501]', '[502]']);
+  assert.deepEqual(flagsAt(dynamicTarget, 6).flags, [], 'after INC, only slot2 is written; slot1 must not inherit it');
   assert.deepEqual(flagsAt(dynamicTarget, 7).flags, ['[501]', '[502]']);
-  assert.equal(flagsAt(dynamicTarget, 6).status, 'partial');
+  assert.equal(flagsAt(dynamicTarget, 6).status, 'unresolved');
 
   console.log('personal-flag-analysis.test.js: PASS');
 }

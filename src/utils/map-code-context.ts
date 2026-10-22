@@ -112,6 +112,12 @@ function addConfiguredCodes(
 ): void {
   const pattern = /[A-Za-z0-9_\-\u4e00-\u9fff]+/g;
   const source = line.slice(start, end);
+  // A map argument containing interpolation is not a literal map identifier.
+  // Matching its inner words would hide real variables such as U3 in
+  // MAPMOVE <$STR(U3)> when MapInfo also declares a literal map named U3.
+  // Keep the entire dynamic argument visible, including incomplete expressions:
+  // neither a literal prefix nor a failed parse proves it is a configured map.
+  if (source.includes('<$')) return;
   let match: RegExpExecArray | null;
   while ((match = pattern.exec(source)) !== null) {
     if (!configuredMapCodes.has(normalizeMapCode(match[0]))) continue;

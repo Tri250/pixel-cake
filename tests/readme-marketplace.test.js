@@ -59,10 +59,16 @@ function main() {
   assert.match(script, /命令、变量、标签、路径、系统常量和引擎函数智能补全/);
   assert.match(script, /自定义检测命令、执行命令、界面语句、引擎函数和系统常量/);
   for (const token of ['CHECKTEXTLIST', 'AutoRunRobot.txt', 'SETONTIMER ID', 'ADDBUTTON', 'ADDDLG', 'QFunction-0.txt', 'QuestDiary']) assert.ok(script.includes(token));
+  assert.match(script, /GOM\/翎风[^\n]*`DELAYGOTO`[^\n]*996PC[^\n]*`DELAYCALL`[^\n]*静态标签[^\n]*当前脚本定义/);
+  assert.match(script, /独立的静态标签参数[^\n]*不猜测动态表达式或带调用参数的写法/);
+  // These commands have audit evidence, but their navigation rules are not yet implemented.
+  assert.doesNotMatch(script, /HCALL|SendCenterMsg|SENDDELAYMSG/i);
   assert.match(script, /MerChant\.txt[^\n]*第一列[^\n]*缺失[^\n]*确认创建/i);
   assert.match(script, /第五列[^\n]*原始地图/);
   assert.match(script, /当前文档所属服务端[^\n]*取消不创建[^\n]*不覆盖/);
   assert.match(script, /`MapInfo\.txt`[^\n]*显示名称[^\n]*Ctrl\+左键[^\n]*原始地图/);
+  assert.match(script, /`MapInfo\.txt`[^\n]*连接行[^\n]*两端[^\n]*分别点击[^\n]*原始地图[^\n]*定位坐标/);
+  assert.match(script, /点击时读取当前文档[^\n]*所属服务端[^\n]*首个视口就绪/);
   assert.match(script, /`MonGen\.txt` 第一列[^\n]*原始地图[^\n]*第四列[^\n]*MonItems\/[^\n]*确认创建/);
   assert.match(script, /`Alt\+R`[^\n]*空白爆率文本[^\n]*已有文件不覆盖[^\n]*不会自动生成爆率/);
   assert.match(script, /实时语法检查/);
@@ -78,6 +84,21 @@ function main() {
   assert.match(variables, /U\/T\/A\/G 四类编号变量与个人标识统计/);
   assert.match(variables, /U3\/u3\/U003/);
   assert.match(variables, /个人标识按引擎范围[^\n]*动态编号[^\n]*不确定性/);
+  assert.match(variables, /按语句位置[^\n]*MOV[^\n]*INC\/DEC\/MUL\/DIV[^\n]*FORMULATION[^\n]*括号与四则运算/);
+  assert.match(variables, /#ACT\/#SAY[^\n]*#ELSEACT\/#ELSESAY[^\n]*两种排列顺序[^\n]*互斥分支/);
+  assert.match(variables, /NPC 点击参数[^\n]*多层[^\n]*参数从调用位置取值/);
+  assert.match(variables, /单工作表 BIFF8[^\n]*\.xls[^\n]*\.xlsx[^\n]*不运行宏[^\n]*不把公式缓存/);
+  assert.match(variables, /多工作表、加密、损坏或超限数据不擅自当作完整结果/);
+  for (const label of ['直接引用', '确定推导', '可能引用', '未解动态']) assert.ok(variables.includes(label), label);
+  assert.match(variables, /来源表达式、位置[^\n]*推导过程和未解原因/);
+  assert.match(variables, /源码引用处数，不是运行次数/);
+  assert.match(variables, /多个可能编号[^\n]*分别标为可能引用/);
+  assert.match(variables, /不代表线上已经执行/);
+  assert.match(variables, /当前扫描范围内未发现引用/);
+  assert.match(variables, /依赖读取失败或值域超限[^\n]*不确定性[^\n]*不将候选保证为空闲/);
+  assert.match(variables, /侧栏按已保存内容更新[^\n]*统计报告[^\n]*草稿/);
+  assert.match(variables, /HUMAN\(变量名\)[^\n]*GUILD\(变量名\)[^\n]*作用域身份[^\n]*CLEARVAR S0 5[^\n]*S0～S4/);
+  assert.doesNotMatch(variables, /100%|百分之百|保证统计所有|线上实际使用次数/);
 
   const ui = feature('UI 可视化编辑器');
   assert.match(ui, /#### 常规 UI 编辑器/);
@@ -111,7 +132,11 @@ function main() {
   assert.doesNotMatch(resources, /新建 JPK|导出 GIF/);
 
   const database = feature('数据库编辑器');
-  assert.match(database, /SQLite[^\n]*MDB 只读[^\n]*cfg_item\.xls/);
+  assert.match(database, /SQLite[^\n]*cfg_item\.xls/);
+  assert.match(database, /Access MDB[^\n]*Windows[^\n]*Jet\/ACE[^\n]*增删改[^\n]*Ctrl\+Z/);
+  assert.match(database, /组件不可用时保留只读并提示原因/);
+  assert.match(database, /手动打开的数据库仅展示字段详情/);
+  assert.match(database, /Currency、Numeric、BigInt[^\n]*不参与自动递增或拖动序列/);
   assert.match(database, /MonItems[^\n]*MonIcons/);
   assert.match(database, /保存刷新时保留当前滚动位置与选区/);
   assert.match(database, /做好完整备份[^\n]*不直接编辑正在运行的服务端数据库/);

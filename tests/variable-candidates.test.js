@@ -66,6 +66,38 @@ function main() {
   });
   assert.deepEqual([...crlf.variables.U], [3]);
 
+  for (const engine of ['GOM', 'GEE', '996PC']) {
+    const scopedNames = collectCandidateUsage([
+      '#ACT',
+      'VAR INTEGER HUMAN U3',
+      'CALCVAR HUMAN U3 + 5',
+      'LOADVAR HUMAN U3 vars.txt',
+      'SAVEVAR HUMAN U3 vars.txt',
+      '#SAY',
+      '<$HUMAN(U3)>',
+    ].join('\r\n'), { engine });
+    assert.equal(scopedNames.variables.U.has(3), false, `${engine}: a scoped name U3 is not an ordinary U3 slot`);
+    assert.equal(unusedVariableCandidates('U', scopedNames).includes(3), true);
+    assert.equal(scopedNames.uncertainVariableFamilies.size, 0, 'literal scoped names are not dynamic slot references');
+  }
+  const mixedScopes = collectCandidateUsage([
+    '#ACT VAR INTEGER HUMAN U3',
+    '#ELSEACT CALCVAR GUILD T4 + 5',
+    '#SAY',
+    '<$HUMAN(U3)> <$GUILD(T4)> <$U3>',
+    'VAR INTEGER HUMAN U7',
+    '#ACT',
+    'VAR INTEGER HUMAN <$STR(U9)>',
+    'CLEARVAR S0 5',
+  ].join('\n'), { engine: 'GEE' });
+  assert.deepEqual([...mixedScopes.variables.U], [3, 7, 9], 'real adjacent placeholders and dynamic-name inputs remain ordinary references; SAY examples are not commands');
+  assert.equal(mixedScopes.variables.T.has(4), false);
+  const { analyzeVariableListFile } = require('../out/utils/variable-list');
+  const shared = analyzeVariableListFile('#ACT\rVAR INTEGER HUMAN U3\r#SAY\r<$HUMAN(U3)> <$U4>', 'scope.txt', { engine: () => 'GOM' });
+  assert.equal(shared.variables.some(item => item.name === 'U3'), false);
+  assert.equal(shared.candidates.variables.U.has(3), false, 'list and candidates share semantic exclusions');
+  assert.equal(shared.candidates.variables.U.has(4), true);
+
   const merged = mergeCandidateUsage(createCandidateUsage(), direct);
   mergeCandidateUsage(merged, nested);
   assert.equal(merged.variables.U.has(3), true);

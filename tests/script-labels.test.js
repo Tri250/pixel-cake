@@ -41,6 +41,41 @@ async function main() {
 
   assert.deepEqual(findScriptLabelReferences('; GOTO @不存在*'), []);
   assert.deepEqual(findScriptLabelReferences('// GOTO @不存在*'), []);
+  for (const engine of ['GOM', 'GEE']) {
+    for (const command of ['DELAYGOTO', 'DelayCall']) {
+      const delayedLine = `\uFEFF  ${command} 1000 @延迟-中文入口*`;
+      const delayed = findScriptLabelReferences(delayedLine, engine);
+      assert.equal(delayed.length, 1, `${engine} ${command} must expose its second argument as a local label`);
+      assert.equal(delayed[0].kind, 'goto');
+      assert.equal(delayed[0].name, '延迟-中文入口*');
+      assert.equal(delayed[0].markerStart, delayedLine.indexOf('@'));
+      assert.equal(delayedLine.slice(delayed[0].nameStart, delayed[0].end), '延迟-中文入口*');
+      assert.equal(findScriptLabelReferences(`#ELSEACT(${command} 1000 @入口)`, engine)[0]?.name, '入口');
+      for (const ignored of [
+        `${command} @入口 1000`, `${command} 1000`, `${command} 1000 @`,
+        `${command} 1000 @<$STR(S$入口)>`, `${command}Ex 1000 @入口`,
+        `SENDMSG 6 ${command} 1000 @入口`, `; ${command} 1000 @入口`,
+        `// ${command} 1000 @入口`, `#SAY(${command} 1000 @入口)`,
+        `#IF(${command} 1000 @入口)`,
+      ]) assert.deepEqual(findScriptLabelReferences(ignored, engine), [], ignored);
+    }
+  }
+  const delayedText = [
+    '[@入口]', '#ACT', 'DELAYGOTO 1000 @入口', '#SAY', 'DELAYGOTO 1000 @不是调用',
+    '#IF', 'DelayCall 1000 @不是条件', '#ELSEACT(DelayCall 1000 @入口)',
+  ].join('\r\n');
+  const delayedReferences = findScriptLabelReferencesInText(delayedText, 'GOM');
+  assert.deepEqual(delayedReferences.map(reference => reference.name), ['入口', '入口']);
+  for (const reference of delayedReferences) assert.equal(delayedText[reference.markerStart], '@');
+  assert.deepEqual(findUndefinedScriptLabelReferences(delayedText.split('\r\n'), new Set(['入口']), { engine: 'GOM' }), []);
+  assert.deepEqual(findUndefinedScriptLabelReferences(['#ACT', 'DELAYGOTO 1000 @缺失入口'], new Set(), { engine: 'GEE' })
+    .map(reference => reference.name), ['缺失入口']);
+  assert.equal(findScriptLabelReferences('DelayCall 1000 @入口', '996PC')[0]?.name, '入口');
+  assert.deepEqual(findScriptLabelReferences('DelayGoto 1000 @入口', '996PC'), [],
+    'unverified 996PC DelayGoto parameters must not borrow GOM or GEE rules');
+  assert.equal(findScriptLabelReferences('DELAYGOTO 1000 @入口 1', 'GEE')[0]?.name, '入口');
+  assert.deepEqual(findScriptLabelReferences('DELAYCALL 1000 @入口(参数)', 'GOM'), [],
+    'no delayed-call argument-list syntax has been verified');
   assert.equal(findAtLabelTokenAt('SEC 1 @_@神秘代码#', 14), '_@神秘代码#');
   assert.equal(findAtLabelTokenAt('SEC 1 @sfjdkjhs*', 16), 'sfjdkjhs*');
 
@@ -379,7 +414,7 @@ async function main() {
 
   const assistant = fs.readFileSync('src/assistant.ts', 'utf8');
   const callbackBranch = assistant.indexOf('// SetOnTimer/AddButton 的静态触发编号与新 GOM AddDlg');
-  const ordinaryLabelBranch = assistant.indexOf('const scriptLabelReferences = findScriptLabelReferences(line);');
+  const ordinaryLabelBranch = assistant.indexOf('const scriptLabelReferences = findScriptLabelReferences(');
   assert.ok(callbackBranch >= 0 && ordinaryLabelBranch > callbackBranch);
   const callbackProviderSource = assistant.slice(callbackBranch, ordinaryLabelBranch);
   assert.match(callbackProviderSource, /getConfiguration\('boo', document\.uri\)/);

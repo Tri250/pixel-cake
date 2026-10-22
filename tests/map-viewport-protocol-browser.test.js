@@ -75,6 +75,47 @@ function scenarioScript() {
     return state.original.appliedViewportKey!==undefined
       ?state.original.appliedViewportKey:state.original.lastViewportKey;
   }
+  function lastVisibleRequest(){
+    var requests=window.__viewportPosted.filter(function(item){
+      return item.type==='loadOriginalMapViewport'&&!item.prefetch;
+    });
+    return requests[requests.length-1];
+  }
+  function checkPointGeometry(point,message){
+    var worldX=point.x*48+24,worldY=point.y*32;
+    var expectedX=state.worldW<=viewport.clientWidth
+      ?Math.round((viewport.clientWidth-state.worldW)/2)
+      :Math.round(Math.min(0,Math.max(viewport.clientWidth-state.worldW,viewport.clientWidth/2-worldX)));
+    var expectedY=state.worldH<=viewport.clientHeight
+      ?Math.round((viewport.clientHeight-state.worldH)/2)
+      :Math.round(Math.min(0,Math.max(viewport.clientHeight-state.worldH,viewport.clientHeight/2-worldY)));
+    check(state.scale===1,message+': map was not shown at 100%');
+    check(state.offsetX===expectedX&&state.offsetY===expectedY,message+': wrong world-to-viewport geometry '+JSON.stringify({
+      x:state.offsetX,y:state.offsetY,expectedX:expectedX,expectedY:expectedY,width:viewport.clientWidth,height:viewport.clientHeight
+    }));
+    var rect=canvas.getBoundingClientRect(),screenX=state.offsetX+worldX,screenY=state.offsetY+worldY;
+    check(rect.width>0&&rect.height>0&&screenX>=0&&screenX<=rect.width&&screenY>=0&&screenY<=rect.height,
+      message+': target did not land inside the real canvas bounds');
+  }
+  function checkRequestContainsPoint(request,point,message){
+    check(request&&request.viewport,message+': no scoped viewport request');
+    var area=request.viewport;
+    check(area.left<=point.x&&area.right>=point.x&&area.top<=point.y&&area.bottom>=point.y,
+      message+': requested viewport omitted target '+JSON.stringify({point:point,viewport:area}));
+    check((area.right-area.left+1)*(area.bottom-area.top+1)<128*64,
+      message+': point reveal requested the whole map');
+  }
+  function pointLoad(point,withNpcs){
+    var data=mapData();data.originalMap=true;data.revealPoint=point;
+    if(withNpcs)data.npcs=[
+      {lineNumber:0,x:point.x,y:point.y,displayName:'同点NPC'},
+      {lineNumber:8,x:point.x+1,y:point.y+1,displayName:'附近NPC'}
+    ];
+    window.__viewportPosted.length=0;send(Object.assign({type:'mapData'},data));
+    var load=window.__viewportPosted.find(function(item){return item.type==='loadOriginalMap'});
+    check(load,'point payload did not issue an original-map load request');
+    return load;
+  }
   async function run(name,body){
     try{await body();results.push({name:name,status:'pass'})}
     catch(error){results.push({name:name,status:'fail',message:error&&error.stack?error.stack:String(error)})}
@@ -99,6 +140,126 @@ function scenarioScript() {
     check(state.original.active,'reveal command did not switch from preview back to original');
   });
 
+  await run('MapInfo point survives actual Ready dimensions and the first visible viewport',async function(){
+    var point={x:101,y:47},data=mapData();data.map.width=12;data.map.height=8;
+    data.originalMap=true;data.revealPoint=point;window.__viewportPosted.length=0;
+    send(Object.assign({type:'mapData'},data));
+    var load=window.__viewportPosted.find(function(item){return item.type==='loadOriginalMap'});
+    check(load&&state.pendingMapPointReveal,'point was lost before Ready established the real dimensions');
+    check(!state.pendingNpcReveal&&state.npcs.length===0,'generic point invented an NPC or NPC reveal');
+    var request=ready(load,16,16);
+    checkPointGeometry(point,'Ready point reveal');
+    checkRequestContainsPoint(request,point,'first point viewport');
+    check(state.pendingMapPointReveal,'point finalized before the first viewport was applied');
+    send(viewportData(request));await wait(20);
+    check(state.original.ready&&state.original.layer,'point viewport was not rendered');
+    checkPointGeometry(point,'first applied point viewport');
+    check(!state.pendingMapPointReveal,'applied point was left pending');
+    check(state.selectedEntityType===''&&!entityLayer.querySelector('.selected'),
+      'generic point selected a fake NPC');
+  });
+
+  await run('ready-map point reveals keep the layer and generation and clear existing NPC selection',async function(){
+    var first={x:93,y:42},load=pointLoad(first,true),request=ready(load,16,16);
+    send(viewportData(request));await wait(20);clearOriginalPrefetchTimer();
+    var layer=state.original.layer,generation=state.original.generation,npc=state.npcs[0];
+    selectEntity('npc',npc);check(state.selectedEntityType==='npc','NPC-selection fixture was not selected');
+    window.__viewportPosted.length=0;
+    var second={x:21,y:18};send({type:'revealOriginalMap',point:second});
+    checkPointGeometry(second,'repeat ready point reveal');
+    checkRequestContainsPoint(lastVisibleRequest(),second,'repeat ready point viewport');
+    check(state.original.layer===layer&&state.original.generation===generation,'ready point discarded its rendered layer');
+    check(!window.__viewportPosted.some(function(item){return item.type==='loadOriginalMap'}),
+      'ready point reveal restarted the full-map loader');
+    check(state.npcs.length===2&&state.npcs[0]===npc&&npc.x===first.x&&npc.y===first.y,
+      'generic point reveal changed or invented NPC data');
+    check(state.selectedEntityType===''&&state.selectedEntityLine===0&&!state.pendingNpcReveal&&
+      !entityLayer.querySelector('.selected')&&!npcJumpList.querySelector('.active'),
+      'generic point reused an NPC line number or retained its selection');
+    clearOriginalViewportTimer();
+  });
+
+  await run('point reveal returns from preview without reloading and accepts coordinate zero',async function(){
+    var setup=await loaded(16,16),layer=setup.layer,generation=state.original.generation;
+    switchToPreviewMap();window.__viewportPosted.length=0;
+    var point={x:91,y:40};send({type:'revealOriginalMap',point:point});
+    check(state.original.active,'point reveal did not return from the miniature map');
+    checkPointGeometry(point,'cached original point reveal');
+    checkRequestContainsPoint(lastVisibleRequest(),point,'cached original point viewport');
+    check(state.original.layer===layer&&state.original.generation===generation,'cached point reveal discarded a ready layer');
+    check(!window.__viewportPosted.some(function(item){return item.type==='loadOriginalMap'}),'cached point reveal reloaded the map');
+    window.__viewportPosted.length=0;
+    var zero={x:0,y:0};send({type:'revealOriginalMap',point:zero});
+    checkPointGeometry(zero,'zero coordinate reveal');
+    checkRequestContainsPoint(lastVisibleRequest(),zero,'zero coordinate viewport');
+    clearOriginalViewportTimer();clearOriginalPrefetchTimer();
+  });
+
+  await run('zoom cancels pending point so a late first viewport cannot pull the user back',async function(){
+    for(var mode of ['button','wheel']){
+      var load=pointLoad({x:101,y:47},false),request=ready(load,16,16);
+      check(state.pendingMapPointReveal,'zoom fixture did not have a pending point');
+      if(mode==='button')document.getElementById('zoomIn').click();
+      else{
+        var rect=viewport.getBoundingClientRect();
+        viewport.dispatchEvent(new WheelEvent('wheel',{deltaY:-1,clientX:rect.left+120,clientY:rect.top+90,cancelable:true}));
+      }
+      check(!state.pendingMapPointReveal,mode+' zoom did not cancel the pending point');
+      var view={scale:state.scale,x:state.offsetX,y:state.offsetY};
+      send(viewportData(request));await wait(20);
+      check(state.original.ready&&state.original.layer,'late zoom viewport did not finish loading');
+      check(state.scale===view.scale&&state.offsetX===view.x&&state.offsetY===view.y,
+        mode+' zoom was overwritten by the late first viewport');
+      clearOriginalViewportTimer();clearOriginalPrefetchTimer();
+    }
+  });
+
+  await run('drag cancels pending point and preserves the user position after viewport data',async function(){
+    var load=pointLoad({x:101,y:47},false);ready(load,16,16);
+    check(state.pendingMapPointReveal,'drag fixture did not have a pending point');
+    var rect=viewport.getBoundingClientRect(),x=rect.left+220,y=rect.top+160;
+    viewport.dispatchEvent(new MouseEvent('mousedown',{button:0,clientX:x,clientY:y}));
+    viewport.dispatchEvent(new MouseEvent('mousemove',{buttons:1,clientX:x+73,clientY:y+41}));
+    window.dispatchEvent(new MouseEvent('mouseup',{button:0,clientX:x+73,clientY:y+41}));
+    check(!state.pendingMapPointReveal,'drag did not cancel the pending point');
+    var view={scale:state.scale,x:state.offsetX,y:state.offsetY},request=lastVisibleRequest();
+    check(request,'drag did not request the resulting viewport');
+    send(viewportData(request));await wait(20);
+    check(state.original.ready&&state.original.layer,'drag viewport data was not applied');
+    check(state.scale===view.scale&&state.offsetX===view.x&&state.offsetY===view.y,
+      'late drag viewport pulled the map back to the old point');
+    clearOriginalViewportTimer();clearOriginalPrefetchTimer();
+  });
+
+  await run('new map without a point does not inherit the previous pending reveal',async function(){
+    pointLoad({x:101,y:47},false);check(state.pendingMapPointReveal,'map-switch fixture had no pending point');
+    var data=mapData();data.map.key='no-point-map';data.map.mapId='no-point-map';data.originalMap=true;
+    window.__viewportPosted.length=0;send(Object.assign({type:'mapData'},data));
+    check(!state.pendingMapPointReveal&&!state.pendingNpcReveal,'new map inherited a previous reveal target');
+    var load=window.__viewportPosted.find(function(item){return item.type==='loadOriginalMap'}),request=ready(load,16,16);
+    send(viewportData(request));await wait(20);
+    check(state.scale===1&&state.offsetX===Math.round((viewport.clientWidth-state.worldW)/2)&&
+      state.offsetY===Math.round((viewport.clientHeight-state.worldH)/2),
+      'new map without a reveal point did not retain the normal centered view');
+    clearOriginalViewportTimer();clearOriginalPrefetchTimer();
+  });
+
+  await run('malformed reveal points cannot override a ready map view',async function(){
+    await loaded(16,16);clearOriginalPrefetchTimer();
+    var point={x:43,y:21};centerWorldPoint(point.x*48+24,point.y*32,1,false);
+    var view={scale:state.scale,x:state.offsetX,y:state.offsetY},layer=state.original.layer;
+    for(var invalid of [{x:'11',y:30},{x:-1,y:3},{x:2.5,y:3},{x:2,y:null},null]){
+      window.__viewportPosted.length=0;send({type:'revealOriginalMap',point:invalid});
+      check(state.scale===view.scale&&state.offsetX===view.x&&state.offsetY===view.y,
+        'malformed point changed the ready viewport: '+JSON.stringify(invalid));
+      check(!state.pendingMapPointReveal&&!state.pendingNpcReveal&&state.original.layer===layer,
+        'malformed point became a pending reveal or invalidated the ready layer');
+      check(!window.__viewportPosted.some(function(item){return item.type==='loadOriginalMap'}),
+        'malformed point restarted the loader');
+    }
+    clearOriginalViewportTimer();clearOriginalPrefetchTimer();
+  });
+
   await run('load-level error before Ready is visible',async function(){
     var load=reset();
     send({type:'originalMapError',requestId:load.requestId,generation:101,message:'pre-ready failure'});
@@ -117,6 +278,7 @@ function scenarioScript() {
   await run('non-square chunk width and height stay independent',async function(){
     var load=reset();ready(load,16,8);window.__viewportPosted.length=0;
     state.original.lastViewportKey='';
+    state.original.pendingViewportKey='';
     if(state.original.appliedViewportKey!==undefined)state.original.appliedViewportKey='';
     centerWorldPoint(64*48,40*32,1,false);flushOriginalMapViewport();
     var request=window.__viewportPosted.find(function(item){return item.type==='loadOriginalMapViewport'});

@@ -55,6 +55,39 @@ export function isStaticMapInfoEntry(entry: Pick<MapInfoEntry, 'mapId' | 'origin
   ));
 }
 
+export interface MapInfoConnectionEndpoint {
+  mapId: string;
+  x: number;
+  y: number;
+  /** Half-open span of this endpoint, including its map ID and coordinates. */
+  span: { start: number; end: number };
+}
+
+export interface ParsedMapInfoConnectionLine {
+  lineNumber: number;
+  from: MapInfoConnectionEndpoint;
+  to: MapInfoConnectionEndpoint;
+}
+
+/** Read only explicit, static map connections; comments and display prose are not links. */
+export function parseMapInfoConnectionLine(
+  rawLine: string,
+  lineNumber: number
+): ParsedMapInfoConnectionLine | undefined {
+  const match = rawLine.match(/^(\s*)(\S+[ \t]+\d+(?:[ \t]*,[ \t]*|[ \t]+)\d+)[ \t]*->[ \t]*(\S+[ \t]+\d+(?:[ \t]*,[ \t]*|[ \t]+)\d+)[ \t]*(?:(?:;|\/\/).*)?$/);
+  if (!match) return undefined;
+  const parseEndpoint = (text: string, start: number): MapInfoConnectionEndpoint | undefined => {
+    const fields = text.match(/^(\S+)[ \t]+(\d+)(?:[ \t]*,[ \t]*|[ \t]+)(\d+)$/);
+    if (!fields || !isStaticMapInfoEntry({ mapId: fields[1], originalMapId: fields[1] })) return undefined;
+    const x = Number(fields[2]), y = Number(fields[3]);
+    if (!Number.isSafeInteger(x) || !Number.isSafeInteger(y)) return undefined;
+    return { mapId: fields[1], x, y, span: { start, end: start + text.length } };
+  };
+  const from = parseEndpoint(match[2], match[1].length);
+  const to = parseEndpoint(match[3], rawLine.indexOf(match[3], match[1].length + match[2].length));
+  return from && to ? { lineNumber, from, to } : undefined;
+}
+
 export interface MapMarker {
   mapName: string;
   x: number;

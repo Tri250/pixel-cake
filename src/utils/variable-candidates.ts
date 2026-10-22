@@ -5,7 +5,7 @@ import {
   NestedVariableAnalysisOptions,
 } from './nested-variable-analysis';
 import { isScriptCommentLine } from './script-labels';
-import { findScriptVariables } from './variable-statistics';
+import { findScriptVariables, findSemanticScriptVariableExclusionRanges } from './variable-statistics';
 import { EngineId } from '../types';
 
 export type CandidateVariableFamily = 'U' | 'T' | 'A' | 'G';
@@ -58,12 +58,14 @@ export function collectCandidateUsage(
   const nested = options.nestedAnalysis || analyzeNestedVariables(text, {
     ...options, personalFlagRange: options.personalFlagRange || personalFlagRangeForEngine(usage.engine),
   });
+  const semanticExcludedRanges = findSemanticScriptVariableExclusionRanges(activeText, usage.engine);
   for (const reference of findScriptVariables(activeText)) {
     const match = /^([UTAG])(\d+)$/i.exec(reference.name);
     if (!match || isNestedVariableBaseOffset(reference.index, nested.references)) continue;
     if (options.excludedRanges?.some(range => range.start <= reference.index && reference.index < range.end)) {
       continue;
     }
+    if (semanticExcludedRanges.some(range => range.start <= reference.index && reference.index < range.end)) continue;
     addVariable(usage, match[1], Number(match[2]));
   }
 

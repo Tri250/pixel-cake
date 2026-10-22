@@ -5,6 +5,7 @@ export type ScriptLabelReferenceKind = 'ui' | 'goto';
 
 export interface ScriptLabelReference {
   kind: ScriptLabelReferenceKind;
+  command?: 'DELAYGOTO' | 'DELAYCALL';
   name: string;
   rawName: string;
   markerStart: number;
@@ -90,6 +91,16 @@ const SCRIPT_COMMAND_CALLBACK_RULES: readonly ScriptCommandCallbackRule[] = [
     engine: 'GOM',
     targetFileName: 'QFunction-0.txt',
   },
+];
+
+// Fixed second-argument local targets, verified against each engine's help.
+// 996PC documents DelayCall, but its DelayGoto entry has no verified signature.
+const LOCAL_DELAYED_LABEL_COMMANDS: readonly {
+  name: 'DELAYGOTO' | 'DELAYCALL';
+  engines: readonly EngineId[];
+}[] = [
+  { name: 'DELAYGOTO', engines: ['GOM', 'GEE'] },
+  { name: 'DELAYCALL', engines: ['GOM', 'GEE', '996PC'] },
 ];
 
 // 官方系统回调标签（按钮/对话标签中的 /@ 或 /@@ 调用），用于避免误报
@@ -304,7 +315,11 @@ export function isEngineNativeScriptLabelReference(
     || /^HIREARCHERNOW(?:[1-9]|1[0-2])$/.test(key);
 }
 
-export function findScriptLabelReferences(lineText: string): ScriptLabelReference[] {
+export function findScriptLabelReferences(
+  lineText: string,
+  engine: EngineId = 'GOM',
+  allowCommandLabels = true
+): ScriptLabelReference[] {
   if (isScriptCommentLine(lineText)) return [];
 
   const references: ScriptLabelReference[] = [];
@@ -321,17 +336,39 @@ export function findScriptLabelReferences(lineText: string): ScriptLabelReferenc
     if (reference) references.push(reference);
   }
 
+  if (allowCommandLabels) {
+    const directive = /^\s*#([A-Za-z]+)/.exec(lineText)?.[1].toUpperCase();
+    if (!directive || directive === 'ACT' || directive === 'ELSEACT') {
+      for (const invocation of findScriptCommandInvocations(lineText, typedName => (
+        LOCAL_DELAYED_LABEL_COMMANDS.find(rule => rule.name === typedName.toUpperCase()
+          && rule.engines.includes(engine))
+      ))) {
+        if (invocation.form !== 'line') continue;
+        const argument = invocation.arguments[1];
+        if (!argument) continue;
+        const label = normalizeStaticDirectCallbackLabel(argument.text);
+        if (!label) continue;
+        references.push({ kind: 'goto', command: invocation.command.name,
+          name: label, rawName: label, markerStart: argument.start,
+          nameStart: argument.start + 1, end: argument.end });
+      }
+    }
+  }
+
   return references.sort((left, right) => left.markerStart - right.markerStart);
 }
 
-export function findScriptLabelReferencesInText(text: string): ScriptLabelReference[] {
+export function findScriptLabelReferencesInText(text: string, engine: EngineId = 'GOM'): ScriptLabelReference[] {
   const references: ScriptLabelReference[] = [];
   let lineStart = 0;
+  let allowCommandLabels = true;
 
   while (lineStart <= text.length) {
     let lineEnd = lineStart;
     while (lineEnd < text.length && text[lineEnd] !== '\r' && text[lineEnd] !== '\n') lineEnd++;
-    for (const reference of findScriptLabelReferences(text.slice(lineStart, lineEnd))) {
+    const lineText = text.slice(lineStart, lineEnd);
+    allowCommandLabels = commandLabelsAllowedInBlock(lineText, allowCommandLabels);
+    for (const reference of findScriptLabelReferences(lineText, engine, allowCommandLabels)) {
       references.push({
         ...reference,
         markerStart: reference.markerStart + lineStart,
@@ -355,8 +392,10 @@ export function findUndefinedScriptLabelReferences(
     return [];
   }
   const unresolved: LocatedScriptLabelReference[] = [];
+  let allowCommandLabels = true;
   for (let line = 0; line < lines.length; line++) {
-    for (const reference of findScriptLabelReferences(lines[line])) {
+    allowCommandLabels = commandLabelsAllowedInBlock(lines[line], allowCommandLabels);
+    for (const reference of findScriptLabelReferences(lines[line], options.engine, allowCommandLabels)) {
       const key = normalizeScriptLabelKey(reference.name);
       if (key === 'EXIT' || key === 'MAIN') continue;
       if (reference.name.includes('<') || /^\d+$/.test(reference.name)) continue;
@@ -370,6 +409,11 @@ export function findUndefinedScriptLabelReferences(
     }
   }
   return unresolved;
+}
+
+function commandLabelsAllowedInBlock(lineText: string, previous: boolean): boolean {
+  const directive = /^\s*#(ACT|ELSEACT|SAY|ELSESAY|IF|OR)\b/i.exec(lineText)?.[1].toUpperCase();
+  return directive ? directive === 'ACT' || directive === 'ELSEACT' : previous;
 }
 
 export function findAtLabelTokenAt(lineText: string, character: number): string | undefined {

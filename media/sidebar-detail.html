@@ -79,7 +79,7 @@ window.addEventListener("message",function(e){
   try{
     if(e.data.type==="showDatabaseDetail"||e.data.type==="showItemDetail"){
       if(e.data.type==="showItemDetail"&&!e.data.detailKind)e.data.detailKind='item';
-      var preserveVisuals=e.data.preserveSelectionVisuals===true&&_detail&&_detail.name===e.data.name;
+      var preserveVisuals=e.data.fieldsOnly!==true&&_detail&&_detail.fieldsOnly!==true&&e.data.preserveSelectionVisuals===true&&_detail.name===e.data.name;
       if(preserveVisuals&&(!e.data.fields||Object.keys(e.data.fields).length===0)) e.data.fields=_detail.fields||{};
       if(preserveVisuals&&(!e.data.columnLabels||Object.keys(e.data.columnLabels).length===0)) e.data.columnLabels=_detail.columnLabels||{};
       if(preserveVisuals&&(!e.data.columnDescriptions||Object.keys(e.data.columnDescriptions).length===0)) e.data.columnDescriptions=_detail.columnDescriptions||{};
@@ -193,6 +193,7 @@ function renderDetail(){
   stopDescriptionAnimations();
   var d=_detail||{},detailKind=d.detailKind||'item',h='<div class="item-name">'+escapeHtml(d.name||'')+'</div>';
   h+=buildPropTable(d,detailKind);
+  if(d.fieldsOnly===true){document.getElementById('content').innerHTML=h;return}
   if(detailKind==='item'){
     if(d.topDesc!=null)h+=buildEditSection('顶部备注','topDesc');
     if(d.itemDesc!=null)h+=buildEditSection('备注','itemDesc');
@@ -236,7 +237,7 @@ function buildPropTable(d,detailKind){
   var sectionTitle=detailKind==='monster'?'怪物属性':detailKind==='skill'?'技能属性':'物品属性';
   if(detailKind==='other')sectionTitle='数据属性';
   var h='<h4>'+sectionTitle+'</h4>';
-  if(detailKind==='item'&&(hasLooks||d.itemImageLabel)){
+  if(d.fieldsOnly!==true&&detailKind==='item'&&(hasLooks||d.itemImageLabel)){
     h+='<div class="item-material">';
     h+='<div class="item-material-preview">';
     if(d.itemImage) h+='<img src="'+escapeHtml(d.itemImage)+'" alt="物品素材" title="'+escapeHtml(d.itemImageLabel||'物品素材')+'">';
@@ -334,6 +335,7 @@ function handleMonsterEditorKey(event,key){
 }
 
 function saveMonsterDetail(key){
+  if(_detail.fieldsOnly===true)return;
   var textarea=document.getElementById('ta_'+key),button=document.getElementById('save_'+key);
   if(!textarea||_monsterSavePending[key])return;
   _monsterSavePending[key]=true;
@@ -621,6 +623,7 @@ function startDescriptionAnimations(){
 }
 
 function saveDesc(key){
+  if(_detail.fieldsOnly===true)return;
   var ta=document.getElementById("ta_"+key); if(!ta)return;
   var newText=ta.value.replace(/&lt;/g,'<').replace(/&amp;/g,'&');
   _detail[key]=newText; _detail['_'+key+'Edited']=undefined;

@@ -2,6 +2,7 @@ import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { Biff8DatabaseSession } from './biff8-database';
+import { AccessDatabaseSession, AccessMutationResult } from './access-database';
 
 export type DatabaseKind = 'sqlite' | 'access' | 'biff8';
 export type DatabaseProfile = 'legacy' | '996pc';
@@ -19,6 +20,8 @@ export interface DatabaseTableInfo {
   columnLabels: Record<string, string>;
   columnDescriptions: Record<string, string>;
   editable: boolean;
+  readonlyColumns?: string[];
+  editReason?: string;
   schemaEditable: boolean;
   schemaEditReason: string;
   sortMode: 'database' | 'page';
@@ -100,6 +103,7 @@ interface DatabaseUndoEntry {
   mutation: DatabaseMutationResult;
   filePath: string;
   postMutationSha256: string;
+  backupSha256?: string;
 }
 
 interface SqliteColumnInfo {
@@ -143,17 +147,6 @@ interface SqlModule {
   Database: new (data?: Uint8Array) => SqlDatabase;
 }
 
-interface AccessTable {
-  rowCount: number;
-  getColumnNames(): string[];
-  getData(options?: { rowOffset?: number; rowLimit?: number }): unknown[];
-}
-
-interface AccessReader {
-  getTableNames(): string[];
-  getTable(name: string): AccessTable;
-}
-
 let sqlModulePromise: Promise<SqlModule> | undefined;
 
 function getSqlModule(): Promise<SqlModule> {
@@ -175,9 +168,9 @@ export class DatabaseBrowserSession {
   private catalog: DatabaseCatalog | undefined;
   private readonly sources = new Map<string, TableSource>();
   private activeSqlite: { filePath: string; database: SqlDatabase } | undefined;
-  private activeAccess: { filePath: string; reader: AccessReader } | undefined;
+  private readonly accessSessions = new Map<string, AccessDatabaseSession>();
   private disposed = false;
-  private sourceSequence = 0;
+  private readonly sourceIdentity = crypto.randomBytes(8).toString('hex');
   private readonly biff8Session: Biff8DatabaseSession | undefined;
   private readonly undoStack: DatabaseUndoEntry[] = [];
 
@@ -198,14 +191,17 @@ export class DatabaseBrowserSession {
     const tables: TableSource[] = [];
     const databaseLabels: string[] = [];
     if (fs.existsSync(this.dbDirectory)) {
-      const fileNames = fs.readdirSync(this.dbDirectory).sort((left, right) => left.localeCompare(right));
+      const isFile = fs.statSync(this.dbDirectory).isFile();
+      const directory = isFile ? path.dirname(this.dbDirectory) : this.dbDirectory;
+      const fileNames = isFile ? [path.basename(this.dbDirectory)]
+        : fs.readdirSync(directory).sort((left, right) => left.localeCompare(right));
       const sqliteFiles = fileNames.filter(file => /\.db$/i.test(file));
       const accessFiles = fileNames.filter(file => /\.mdb$/i.test(file));
 
       if (sqliteFiles.length > 0) {
         const SQL = await getSqlModule();
         for (const fileName of sqliteFiles) {
-          const filePath = path.join(this.dbDirectory, fileName);
+          const filePath = path.join(directory, fileName);
           let database: SqlDatabase | undefined;
           try {
             database = new SQL.Database(fs.readFileSync(filePath));
@@ -234,31 +230,29 @@ export class DatabaseBrowserSession {
         }
       }
 
-      if (tables.length === 0) {
-        const module = require('mdb-reader') as { default?: new (buffer: Buffer) => AccessReader } | (new (buffer: Buffer) => AccessReader);
-        const MDBReader = typeof module === 'function' ? module : module.default;
-        if (MDBReader) {
-          for (const fileName of accessFiles) {
-            const filePath = path.join(this.dbDirectory, fileName);
-            const reader = new MDBReader(fs.readFileSync(filePath));
-            const tableNames = reader.getTableNames();
-            for (const tableName of tableNames) {
-              const table = reader.getTable(tableName);
-              tables.push(this.createSource(
-                'access',
-                fileName,
-                filePath,
-                tableName,
-                table.rowCount,
-                table.getColumnNames(),
-                [],
-                false,
-                'Access (.MDB) 数据库仅支持读取'
-              ));
-            }
-            if (tableNames.length > 0) databaseLabels.push(`Access (.MDB) - ${fileName}`);
-          }
+      for (const fileName of accessFiles) {
+        const filePath = path.join(directory, fileName);
+        const access = this.getAccessSession(filePath);
+        const metadata = await access.initialize();
+        for (const table of metadata) {
+          const source = this.createSource(
+            'access',
+            fileName,
+            filePath,
+            table.name,
+            table.rowCount,
+            table.columns,
+            [],
+            false,
+            'MDB 字段结构暂不支持修改'
+          );
+          source.editable = table.editable;
+          source.editReason = table.readonlyReason;
+          source.columnTypes = table.columnTypes;
+          source.readonlyColumns = table.columnMetadata.filter(column => !column.editable).map(column => column.name);
+          tables.push(source);
         }
+        if (metadata.length > 0) databaseLabels.push(`Access (.MDB) - ${fileName}`);
       }
     }
 
@@ -336,6 +330,9 @@ export class DatabaseBrowserSession {
       return result;
     }
     const source = await this.getWritableSource(tableId);
+    if (source.kind === 'access') {
+      return this.accessMutation(source, 'create', await this.getAccessSession(source.filePath).createRow(source.name, values));
+    }
     const entries = this.normalizeMutationValues(source, values);
     let rowId = 0;
     const backupPath = await this.persistSqliteMutation(source, database => {
@@ -372,6 +369,9 @@ export class DatabaseBrowserSession {
       return result;
     }
     const source = await this.getWritableSource(tableId);
+    if (source.kind === 'access') {
+      return this.accessMutation(source, 'update', await this.getAccessSession(source.filePath).updateRow(source.name, rowId, values));
+    }
     const normalizedRowId = normalizeRowId(rowId);
     const entries = this.normalizeMutationValues(source, values);
     if (entries.length === 0) throw new Error('没有可修改的字段');
@@ -401,6 +401,9 @@ export class DatabaseBrowserSession {
       return result;
     }
     const source = await this.getWritableSource(tableId);
+    if (source.kind === 'access') {
+      return this.accessMutation(source, 'update', await this.getAccessSession(source.filePath).updateRows(source.name, updates));
+    }
     const normalized = this.normalizeRowUpdates(source, updates);
     const backupPath = await this.persistSqliteMutation(source, database => {
       for (const update of normalized) {
@@ -435,6 +438,9 @@ export class DatabaseBrowserSession {
       return result;
     }
     const source = await this.getWritableSource(tableId);
+    if (source.kind === 'access') {
+      return this.accessMutation(source, 'delete', await this.getAccessSession(source.filePath).deleteRow(source.name, rowId));
+    }
     const normalizedRowId = normalizeRowId(rowId);
     const backupPath = await this.persistSqliteMutation(source, database => {
       runPreparedStatement(
@@ -520,6 +526,18 @@ export class DatabaseBrowserSession {
       throw new Error('数据库已被其他程序修改，为避免覆盖外部数据，本次撤回已取消');
     }
 
+    if (/\.mdb$/i.test(entry.filePath)) {
+      const safetyBackupPath = await this.getAccessSession(entry.filePath)
+        .restoreBackup(entry.mutation.backupPath, entry.postMutationSha256, entry.backupSha256 || '');
+      this.resetAfterExternalRestore();
+      const catalog = await this.initialize();
+      const table = catalog.tables.find(candidate => candidate.id === entry.mutation.tableId);
+      if (!table) throw new Error('撤回后无法重新识别原 MDB 数据表');
+      this.undoStack.pop();
+      return { operation: 'undo', revertedOperation: entry.mutation.operation,
+        tableId: table.id, rowCount: table.rowCount, backupPath: safetyBackupPath };
+    }
+
     const safetyBackupPath = createDatabaseBackup(entry.filePath);
     const temporaryPath = path.join(
       path.dirname(entry.filePath),
@@ -555,13 +573,14 @@ export class DatabaseBrowserSession {
     this.biff8Session?.releaseActive();
     this.activeSqlite?.database.close();
     this.activeSqlite = undefined;
-    this.activeAccess = undefined;
   }
 
   dispose(): void {
     if (this.disposed) return;
     this.releaseActive();
     this.biff8Session?.dispose();
+    for (const access of this.accessSessions.values()) access.dispose();
+    this.accessSessions.clear();
     this.undoStack.length = 0;
     this.sources.clear();
     this.catalog = undefined;
@@ -581,7 +600,7 @@ export class DatabaseBrowserSession {
   ): TableSource {
     const columnTypes = Object.fromEntries(sqliteSchema.map(column => [column.name, column.type]));
     return {
-      id: `table-${this.sourceSequence++}`,
+      id: `table-${this.sourceIdentity}-${crypto.createHash('sha256').update(JSON.stringify([kind, path.resolve(filePath), tableName])).digest('hex')}`,
       name: tableName,
       label: tableCategoryLabel(tableName),
       fileName,
@@ -595,7 +614,7 @@ export class DatabaseBrowserSession {
       editable: kind === 'sqlite' && hasRowId,
       schemaEditable: kind === 'sqlite' && !schemaEditReason,
       schemaEditReason,
-      sortMode: kind === 'sqlite' ? 'database' : 'page',
+      sortMode: 'database',
       sqliteSchema,
       hasRowId,
     };
@@ -667,54 +686,33 @@ export class DatabaseBrowserSession {
     sortDirection: DatabaseSortDirection,
     isCancelled: () => boolean
   ): Promise<DatabasePage> {
-    const reader = this.getActiveAccess(source.filePath);
-    const table = reader.getTable(source.name);
-    let rows: Record<string, unknown>[] = [];
-    let total = source.rowCount;
-
-    if (!query && filters.length === 0) {
-      rows = table.getData({ rowOffset: offset, rowLimit: limit })
-        .map(row => normalizeDatabaseRow(row, source.columns));
-    } else {
-      const keyword = query.toLocaleLowerCase();
-      const allowedFilterValues = filters.map(filter => ({
-        column: filter.column,
-        values: new Set(filter.values.map(value => String(value))),
-      }));
-      const searchColumns = searchColumn ? [searchColumn] : source.columns;
-      const chunkSize = 500;
-      let matched = 0;
-      for (let rowOffset = 0; rowOffset < source.rowCount; rowOffset += chunkSize) {
-        if (isCancelled()) throw new DatabaseRequestCancelledError();
-        const chunk = table.getData({ rowOffset, rowLimit: chunkSize });
-        for (const rawRow of chunk) {
-          const row = normalizeDatabaseRow(rawRow, source.columns);
-          const matchesFilter = allowedFilterValues.every(filter =>
-            filter.values.has(String(row[filter.column] ?? ''))
-          );
-          const matchesSearch = !query || searchColumns.some(column => {
-            const value = String(row[column] ?? '').toLocaleLowerCase();
-            return matchMode === 'exact' ? value === keyword : value.includes(keyword);
-          });
-          if (!matchesFilter || !matchesSearch) continue;
-          if (matched >= offset && rows.length < limit) rows.push(row);
-          matched++;
-        }
-        if ((rowOffset / chunkSize) % 10 === 9) await yieldToEventLoop();
-      }
-      total = matched;
+    const allRows = (await this.getAccessSession(source.filePath).loadRows(source.name))
+      .map(row => normalizeDatabaseRow(row, source.columns));
+    const rows: Record<string, unknown>[] = [];
+    const keyword = query.toLocaleLowerCase();
+    const allowedFilterValues = filters.map(filter => ({ column: filter.column,
+      values: new Set(filter.values.map(value => String(value))) }));
+    const searchColumns = searchColumn ? [searchColumn] : source.columns;
+    for (let index = 0; index < allRows.length; index++) {
+      if (isCancelled()) throw new DatabaseRequestCancelledError();
+      const row = allRows[index];
+      if (allowedFilterValues.every(filter => filter.values.has(String(row[filter.column] ?? '')))
+        && (!query || searchColumns.some(column => {
+          const value = String(row[column] ?? '').toLocaleLowerCase();
+          return matchMode === 'exact' ? value === keyword : value.includes(keyword);
+        }))) rows.push(row);
+      if (index % 5000 === 4999) await yieldToEventLoop();
     }
-
     if (sortColumn) {
       rows.sort((left, right) => compareDatabaseValues(left[sortColumn], right[sortColumn], sortDirection));
     }
     return {
       tableId: source.id,
       columns: source.columns,
-      rows,
+      rows: rows.slice(offset, offset + limit),
       offset,
       limit,
-      total,
+      total: rows.length,
       query,
       searchColumn,
       matchMode,
@@ -731,8 +729,8 @@ export class DatabaseBrowserSession {
     if (!this.catalog) await this.initialize();
     const source = this.sources.get(tableId);
     if (!source) throw new Error('数据库表不存在或已刷新');
-    if (source.kind !== 'sqlite') throw new Error('Access (.MDB) 数据库仅支持读取');
-    if (!source.editable || !source.hasRowId) throw new Error('当前数据表没有可用的 rowid，无法安全修改记录');
+    if (!source.editable) throw new Error(source.editReason || '当前数据表没有可靠行身份，无法安全修改记录');
+    if (source.kind === 'sqlite' && !source.hasRowId) throw new Error('当前数据表没有可用的 rowid，无法安全修改记录');
     return source;
   }
 
@@ -805,12 +803,13 @@ export class DatabaseBrowserSession {
     return backupPath;
   }
 
-  private recordUndo(result: DatabaseMutationResult, filePath: string): void {
+  private recordUndo(result: DatabaseMutationResult, filePath: string, verifiedPostSha256?: string, verifiedBackupSha256?: string): void {
     try {
       this.undoStack.push({
         mutation: { ...result },
         filePath,
-        postMutationSha256: fileSha256(filePath),
+        postMutationSha256: verifiedPostSha256 || fileSha256(filePath),
+        backupSha256: verifiedBackupSha256,
       });
       if (this.undoStack.length > 100) this.undoStack.shift();
     } catch (error) {
@@ -821,9 +820,9 @@ export class DatabaseBrowserSession {
   private resetAfterExternalRestore(): void {
     this.releaseActive();
     this.biff8Session?.resetAfterExternalRestore();
+    for (const access of this.accessSessions.values()) access.reset();
     this.sources.clear();
     this.catalog = undefined;
-    this.sourceSequence = 0;
   }
 
   private refreshCatalogSource(source: TableSource, totalDelta: number): void {
@@ -842,15 +841,28 @@ export class DatabaseBrowserSession {
     return database;
   }
 
-  private getActiveAccess(filePath: string): AccessReader {
-    if (this.activeAccess?.filePath === filePath) return this.activeAccess.reader;
-    this.releaseActive();
-    const module = require('mdb-reader') as { default?: new (buffer: Buffer) => AccessReader } | (new (buffer: Buffer) => AccessReader);
-    const MDBReader = typeof module === 'function' ? module : module.default;
-    if (!MDBReader) throw new Error('MDB Reader 初始化失败');
-    const reader = new MDBReader(fs.readFileSync(filePath));
-    this.activeAccess = { filePath, reader };
-    return reader;
+  private getAccessSession(filePath: string): AccessDatabaseSession {
+    let access = this.accessSessions.get(filePath);
+    if (!access) {
+      access = new AccessDatabaseSession(filePath);
+      this.accessSessions.set(filePath, access);
+    }
+    return access;
+  }
+
+  private async accessMutation(
+    source: TableSource,
+    operation: DatabaseMutationOperation,
+    mutation: AccessMutationResult
+  ): Promise<DatabaseMutationResult> {
+    const delta = mutation.rowCount - source.rowCount;
+    source.rowCount = mutation.rowCount;
+    const metadata = (await this.getAccessSession(source.filePath).initialize()).find(table => table.name === source.name);
+    if (metadata) { source.editable = metadata.editable; source.editReason = metadata.readonlyReason; }
+    this.refreshCatalogSource(source, delta);
+    const result: DatabaseMutationResult = { ...mutation, operation, tableId: source.id };
+    this.recordUndo(result, source.filePath, mutation.postMutationSha256, mutation.preMutationSha256);
+    return result;
   }
 
   private assertAvailable(): void {
@@ -1120,6 +1132,8 @@ function toPublicTableInfo(source: TableSource): DatabaseTableInfo {
     columnLabels: { ...source.columnLabels },
     columnDescriptions: { ...source.columnDescriptions },
     editable: source.editable,
+    readonlyColumns: source.readonlyColumns ? [...source.readonlyColumns] : undefined,
+    editReason: source.editReason,
     schemaEditable: source.schemaEditable,
     schemaEditReason: source.schemaEditReason,
     sortMode: source.sortMode,

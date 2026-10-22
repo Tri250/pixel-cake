@@ -230,6 +230,83 @@ async function main() {
     assert.deepEqual(await names(), ['U21', 'U30']);
     assert.deepEqual(log, []);
 
+    const layersFile = path.join(scripts, 'layers.txt');
+    fs.writeFileSync(layersFile, [
+      'MOV U130 1',
+      'READCONFIGFILEITEM slots.ini setup choices N$choice',
+      'EQUAL U<$STR(N$choice)> 0',
+      'MOV N$exact 130',
+      'EQUAL U<$STR(N$exact)> 0',
+      'EQUAL U<$STR(N$unknown)> 0',
+    ].join('\n'));
+    const layersProvider = new production.VariableListProvider({
+      workspaceState: { get: (key, fallback) => fallback },
+      nestedOptions: () => ({ resolveConfigValues: () => ({ values: ['130', '140'], complete: true }) }),
+      publish() {}, log: message => log.push(message), invalidateDependencies() {},
+    });
+    try {
+      const layeredItems = (await layersProvider.getChildren()).flatMap(group => group.children || []);
+      const mixed = layeredItems.find(item => item.label === 'U130');
+      assert.ok(mixed.description.includes('3处'));
+      for (const label of ['直接引用 1处', '确定推导 1处', '可能引用 1处', '不是运行次数', 'U<$STR(N$choice)>', 'layers.txt:3', '值域完整']) {
+        assert.ok(mixed.tooltip.includes(label), label);
+      }
+      assert.ok(mixed.tooltip.includes('不表示线上已经执行'));
+      const possible = layeredItems.find(item => item.label === 'U140');
+      assert.ok(possible.description.includes('1处 · 可能引用'));
+      assert.ok(possible.tooltip.includes('可能编号'));
+      const unknown = layeredItems.find(item => item.label === 'U<$STR(N$unknown)>');
+      assert.ok(unknown.description.includes('未解动态'));
+      assert.ok(unknown.tooltip.includes('原因：'));
+      assert.ok(unknown.tooltip.includes('未解出编号'));
+      assert.deepEqual(possible.command.arguments, ['U140'], 'evidence labels must not change navigation identity');
+
+      const legacy = layersProvider.buildItems({ usages: new Map([['U7', { type: 'U', count: 2, files: new Set([file]) }]]), occurrences: new Map() });
+      assert.ok(legacy[0].children[0].tooltip.includes('源码引用 2处'), 'old snapshots without source metadata remain displayable');
+    } finally { layersProvider.dispose(); }
+
+    const scopedFile = path.join(scripts, 'scoped.txt');
+    fs.writeFileSync(scopedFile, [
+      '#ACT',
+      'VAR INTEGER HUMAN Same',
+      'VAR INTEGER GUILD Same',
+      'CALCVAR HUMAN Same + 5',
+      '#SAY',
+      '<$HUMAN(Same)> <$GUILD(Same)>',
+      '#ACT',
+      'CLEARVAR S210 5',
+    ].join('\n'));
+    for (const engine of ['GOM', 'GEE', '996PC']) {
+      const scopedProvider = new production.VariableListProvider({
+        engine: () => engine, workspaceState: { get: (key, fallback) => fallback },
+        publish() {}, log: message => log.push(message), invalidateDependencies() {},
+      });
+      try {
+        const tree = await scopedProvider.getChildren();
+        const scopeItems = tree.flatMap(group => group.children || []);
+        const human = scopeItems.find(item => item.label === 'HUMAN(Same)');
+        const guild = scopeItems.find(item => item.label === 'GUILD(Same)');
+        if (engine === '996PC') {
+          assert.equal(human, undefined);
+          assert.equal(guild, undefined);
+          assert.equal(scopeItems.some(item => item.label === 'S214'), false);
+        } else {
+          assert.ok(human.description.includes('3处'));
+          assert.ok(human.tooltip.includes('<$HUMAN(Same)>'));
+          assert.deepEqual(human.command.arguments, ['HUMAN(Same)']);
+          assert.equal(!!guild, engine === 'GEE');
+          if (guild) assert.deepEqual(guild.command.arguments, ['GUILD(Same)']);
+          const start = scopeItems.find(item => item.label === 'S210');
+          const last = scopeItems.find(item => item.label === 'S214');
+          assert.ok(start.description.includes('1处'), 'explicit starting slot is not counted again after expansion');
+          assert.ok(last.tooltip.includes('CLEARVAR S210 5'));
+          assert.ok(last.tooltip.includes('静态区间覆盖S210-S214'));
+          assert.ok(last.tooltip.includes('scoped.txt:8'));
+          assert.ok(tree.some(group => group.label.startsWith('HUMAN命名变量(')));
+        }
+      } finally { scopedProvider.dispose(); }
+    }
+
     const disposalGate = { started: deferred(), release: deferred() };
     nextScanGate = disposalGate;
     provider.clearCache();
@@ -240,7 +317,7 @@ async function main() {
     await new Promise(resolve => setImmediate(resolve));
     assert.equal(publishes, beforeDispose, 'disposed scans never publish');
     assert.deepEqual(await provider.getChildren(), []);
-    console.log('variable-list-provider.test.js: PASS (save-only refresh, stable visible snapshot, real scanner and mocked VS Code events; not native UI acceptance)');
+    console.log('variable-list-provider.test.js: PASS (save-only refresh, stable snapshot, source evidence, named scopes/CLEARVAR, real scanner and mocked VS Code events; not native UI acceptance)');
   } finally {
     global.setTimeout = originalSetTimeout;
     global.clearTimeout = originalClearTimeout;

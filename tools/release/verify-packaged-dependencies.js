@@ -229,6 +229,7 @@ async function main() {
     'Project notice'
   );
   verifyRequiredPackagedFiles(packagedRoot, REQUIRED_NPC_DIALOG_RUNTIME_FILES, 'Ctrl+F12');
+  verifyRequiredPackagedFiles(packagedRoot, ['out/utils/access-database.js', 'tools/AccessBridge/access-bridge.ps1'], 'Access database');
   const npcDialogModuleFiles = verifyLocalModuleClosure(
     packagedRoot,
     ['out/providers/npc-dialog-visual.js'],

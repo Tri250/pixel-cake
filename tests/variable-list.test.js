@@ -4,7 +4,7 @@ const os = require('node:os');
 const path = require('node:path');
 const iconv = require('iconv-lite');
 const { removeTemporaryDirectory } = require('./helpers/temp-cleanup');
-const { VariableListScanner, variableListScanRoots } = require('../out/utils/variable-list');
+const { VariableListScanner, variableListScanRoots, recordVariableListUsage, variableListSourceSummary } = require('../out/utils/variable-list');
 const { findScriptVariables } = require('../out/utils/variable-statistics');
 const { findMapCodeRangesInText } = require('../out/utils/map-code-context');
 
@@ -121,9 +121,99 @@ async function main() {
     assert.ok((await externalScanner.scan([root])).usages.has('U22'));
     configValue = '3';
     assert.ok((await externalScanner.scan([root])).usages.has('U23'), 'dependency changed while script was unchanged');
+
+    const sourcesFile = write('Mir200/Envir/Market_Def/sources.txt', [
+      'MOV U30 1',
+      'READCONFIGFILEITEM slots.ini setup choices N$choice',
+      'EQUAL U<$STR(N$choice)> 0',
+      'MOV N$fixed 30',
+      'EQUAL U<$STR(N$fixed)> 0',
+      'EQUAL U<$STR(N$unknown)> 0',
+      'SET [101] 1',
+      'CHECK [<$STR(N$choice)>] 1',
+      'CHECK [<$STR(N$fixed)>] 1',
+      'RESET [41] 3',
+    ].join('\n'));
+    const sourceScanner = new VariableListScanner({ nestedOptions: () => ({
+      resolveConfigValues: request => request.path === 'slots.ini' ? { values: ['30', '40'], complete: true } : undefined,
+    }) });
+    const sources = await sourceScanner.scan([path.dirname(sourcesFile)], [{ filePath: sourcesFile, text: fs.readFileSync(sourcesFile).toString('utf8') }]);
+    const u30 = sources.usages.get('U30');
+    assert.equal(u30.count, 3, 'one direct token and two dynamic source expressions are three references, not executions');
+    assert.equal(u30.directCount, 1);
+    assert.equal(u30.inferredCount, 1);
+    assert.equal(u30.possibleCount, 1, 'complete multi-value domain is still a possible reference to each slot');
+    assert.equal(sources.usages.get('U40').count, 1, 'expanding one expression must not multiply its per-slot reference count');
+    assert.equal(sources.usages.get('U40').possibleCount, 1);
+    const possible = sources.occurrences.get('U40').find(item => item.file === sourcesFile);
+    assert.equal(possible.line, 2);
+    assert.equal(possible.source.kind, 'possible');
+    assert.equal(possible.source.expression, 'U<$STR(N$choice)>');
+    assert.equal(possible.source.status, 'resolved', 'complete value set must not be confused with a single definite slot');
+    assert.ok(possible.source.reasons.some(reason => reason.includes('多个') || reason.includes('可能编号')));
+    const inferred = sources.occurrences.get('U30').find(item => item.source.kind === 'inferred');
+    assert.equal(inferred.source.expression, 'U<$STR(N$fixed)>');
+    assert.equal(sources.usages.get('U<$STR(N$unknown)>').unknownCount, 1);
+    assert.equal(sources.usages.get('[101]').directCount, 1, 'static flag is a direct reference');
+    assert.equal(sources.usages.get('[30]').possibleCount, 1);
+    assert.equal(sources.usages.get('[30]').inferredCount, 1);
+    for (const flag of ['[41]', '[42]', '[43]']) assert.equal(sources.usages.get(flag).directCount, 1, 'static RESET range names every affected flag');
+    const legacyUsage = new Map();
+    recordVariableListUsage(legacyUsage, 'u003', sourcesFile, () => ({ count: 0, files: new Set() }));
+    assert.equal(legacyUsage.get('U3').directCount, 1, 'callers without metadata retain direct-reference semantics');
+    assert.equal(variableListSourceSummary(legacyUsage.get('U3')), '直接引用 1处');
+
+    const semanticFile = write('Mir200/Envir/Market_Def/semantic/scopes.txt', [
+      '#ACT',
+      'VAR INTEGER HUMAN QQQQ',
+      'CALCVAR HUMAN QQQQ + 5',
+      'LOADVAR HUMAN QQQQ VARSAVE.TXT',
+      'SAVEVAR HUMAN QQQQ VARSAVE.TXT',
+      '#SAY',
+      '<$HUMAN(QQQQ)> <$GUILD(QQQQ)>',
+      'VAR INTEGER HUMAN 展示示例',
+      '#ACT',
+      'VAR INTEGER GUILD QQQQ',
+      'CALCVAR GUILD QQQQ = 100',
+      'SAVEVAR GUILD QQQQ guild.txt',
+      'LOADVAR GUILD LOADONLY guild.txt',
+      'VAR INTEGER HUMAN U3',
+      'SENDMSG 6 <$HUMAN(U3)>',
+      'CLEARVAR S0 5',
+      '#ELSEACT CLEARVAR S003 2',
+      'CLEARVAR U20 5',
+      '#SAY',
+      'CLEARVAR S20 5',
+      '; CALCVAR HUMAN 注释 + 5',
+      '// CLEARVAR S30 5',
+    ].join('\n'), 'utf8');
+    let semanticEngine = 'GOM';
+    const semanticScanner = new VariableListScanner({ engine: () => semanticEngine });
+    const semanticRoot = path.dirname(semanticFile);
+    const gom = await semanticScanner.scan([semanticRoot]);
+    assert.equal(gom.usages.get('HUMAN(QQQQ)').count, 5);
+    assert.equal(gom.usages.get('HUMAN(QQQQ)').directCount, 5);
+    assert.equal(gom.usages.get('HUMAN(QQQQ)').type, 'HUMAN命名变量');
+    assert.equal(gom.usages.get('HUMAN(U3)').count, 2);
+    for (const name of ['QQQQ', 'GUILD(QQQQ)', 'GUILD(LOADONLY)', 'HUMAN(展示示例)', 'HUMAN(注释)', 'U3', 'S21', 'S30', 'U21']) assert.equal(gom.usages.has(name), false, name);
+    for (const name of ['S0', 'S1', 'S2']) assert.equal(gom.usages.get(name).count, 1, 'CLEARVAR starting token must not be double-counted');
+    for (const name of ['S3', 'S4']) assert.equal(gom.usages.get(name).count, 2, 'each command position contributes one range reference');
+    assert.equal(gom.occurrences.get('S4')[0].line, 15);
+    assert.ok(gom.occurrences.get('S4')[0].source.reasons.some(reason => reason.includes('CLEARVAR')));
+    semanticEngine = 'GEE';
+    const gee = await semanticScanner.scan([semanticRoot]);
+    assert.equal(gee.usages.get('GUILD(QQQQ)').count, 4);
+    assert.equal(gee.usages.get('GUILD(QQQQ)').type, 'GUILD命名变量');
+    assert.equal(gee.usages.get('HUMAN(QQQQ)').count, 5, 'equal bare names in different scopes stay distinct');
+    assert.equal(gee.usages.has('GUILD(LOADONLY)'), false);
+    semanticEngine = '996PC';
+    const pc = await semanticScanner.scan([semanticRoot]);
+    assert.equal([...pc.usages.keys()].some(name => /^(?:HUMAN|GUILD)\(/.test(name)), false, 'new scoped semantics never leak into 996PC');
+    assert.equal(pc.usages.has('S1'), false, 'implicit ranges require engine-specific evidence');
+    assert.equal(pc.usages.has('U3'), false, 'a named HUMAN variable called U3 is not an ordinary U3 token');
     assert.equal(await scanner.scan([root], [], () => true), undefined);
     assert.equal((await scanner.scan([])).usages.size, 0);
-    console.log('variable-list.test.js: PASS (extraction, encodings, scope, snapshots, cache, dependencies, map exclusion, navigation)');
+    console.log('variable-list.test.js: PASS (extraction, encodings, scope, snapshots, cache, dependencies, map exclusion, source layers, named scopes, CLEARVAR, navigation)');
   } finally {
     removeTemporaryDirectory(temporary);
   }

@@ -44,10 +44,12 @@ import {
   deleteMapMarkerLine,
   MapDimensions,
   MapInfoEntry,
+  MapInfoConnectionEndpoint,
   MapMarkerUpdate,
   markerMatchesMap,
   isStaticMapInfoEntry,
   parseMapInfoLine,
+  parseMapInfoConnectionLine,
   parseMapInfoText,
   parseMapMarkerText,
   readClassicMapDimensions,
@@ -363,6 +365,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
   private originalMapTilePruneScheduled = false;
   private pendingNpcReveal: MerchantNpcReveal | undefined;
   private pendingOriginalMapKey: string | undefined;
+  private pendingOriginalMapPoint: { x: number; y: number } | undefined;
   private sourceWorkspaceRoot: string | undefined;
   private sourceUri: vscode.Uri | undefined;
 
@@ -381,6 +384,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       this.currentMap = undefined;
       this.pendingNpcReveal = undefined;
       this.pendingOriginalMapKey = undefined;
+      this.pendingOriginalMapPoint = undefined;
       this.clearOriginalMapSession();
       this.panel?.dispose();
       this.reloadMaps();
@@ -388,12 +392,13 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     }));
   }
 
-  /** Runs only after a MapInfo display-name DocumentLink is actually clicked. */
-  async revealMapInfoOriginalMap(sourceUri: unknown, lineNumberValue: unknown): Promise<void> {
+  /** Runs only after a MapInfo definition or connection endpoint is actually clicked. */
+  async revealMapInfoOriginalMap(sourceUri: unknown, lineNumberValue: unknown, side?: unknown): Promise<void> {
     const uri = this.parseSourceUri(sourceUri);
     const lineNumber = Number(lineNumberValue);
     if (!uri || uri.scheme !== 'file' || path.basename(uri.fsPath).toLowerCase() !== 'mapinfo.txt'
-      || !Number.isInteger(lineNumber) || lineNumber < 1) {
+      || !Number.isInteger(lineNumber) || lineNumber < 1
+      || (side !== undefined && side !== 'from' && side !== 'to')) {
       void vscode.window.showWarningMessage('无法定位 MapInfo.txt 中的地图定义');
       return;
     }
@@ -409,14 +414,49 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     try {
       const opened = vscode.workspace.textDocuments.find(document => sameFilePath(document.uri.fsPath, uri.fsPath));
       const document = opened || await vscode.workspace.openTextDocument(uri);
-      const parsed = parseMapInfoLine(document.getText().split(/\r?\n|\r/)[lineNumber - 1] || '', lineNumber);
-      if (!parsed?.nameSpan || !isStaticMapInfoEntry(parsed.entry)) {
-        void vscode.window.showWarningMessage(`MapInfo.txt 第 ${lineNumber} 行不是有效的静态地图定义`);
+      const text = document.getText();
+      const line = text.split(/\r?\n|\r/)[lineNumber - 1] || '';
+      const maps = parseMapInfoText(text);
+      let map: MapInfoEntry | undefined;
+      let point: MapInfoConnectionEndpoint | undefined;
+      if (side === undefined) {
+        const parsed = parseMapInfoLine(line, lineNumber);
+        if (parsed?.nameSpan && isStaticMapInfoEntry(parsed.entry)) map = parsed.entry;
+      } else {
+        const connection = parseMapInfoConnectionLine(line, lineNumber);
+        point = connection?.[side];
+        if (point) {
+          const normalizeId = (value: string): string => value.trim().replace(/^\$/, '').toLowerCase();
+          const id = normalizeId(point.mapId);
+          map = maps.find(entry => normalizeId(entry.mapId) === id)
+            || maps.find(entry => normalizeId(entry.originalMapId) === id);
+          if (!map || !isStaticMapInfoEntry(map)) {
+            void vscode.window.showWarningMessage(`当前服务端 MapInfo.txt 中未找到连接地图：${point.mapId}`);
+            return;
+          }
+          // Validate before rebinding the source server, so a bad endpoint cannot replace a valid view.
+          const mir200Root = path.dirname(envirRoot);
+          const serverRoot = path.basename(mir200Root).toLowerCase() === 'mir200' ? path.dirname(mir200Root) : mir200Root;
+          const engine = normalizeEngineId(vscode.workspace.getConfiguration('boo', uri).get<string>('engine', 'GOM'));
+          const mapPath = findMapPath(serverRoot, [map.originalMapId, map.mapId], this.clientResourceLayout(engine)?.mapRoots || []);
+          if (!mapPath) {
+            void vscode.window.showWarningMessage(`未找到连接地图 ${point.mapId} 的原始 .MAP 文件，请检查地图目录或客户端补丁配置`);
+            return;
+          }
+          const dimensions = readClassicMapDimensions(mapPath);
+          if (dimensions && (point.x >= dimensions.width || point.y >= dimensions.height)) {
+            void vscode.window.showWarningMessage(`连接坐标 ${point.mapId} ${point.x},${point.y} 超出地图范围 ${dimensions.width}×${dimensions.height}`);
+            return;
+          }
+        }
+      }
+      if (!map) {
+        void vscode.window.showWarningMessage(`MapInfo.txt 第 ${lineNumber} 行不是有效的静态地图${side === undefined ? '定义' : '连接'}`);
         return;
       }
       this.bindSourceServer(uri, envirRoot);
-      this.maps = parseMapInfoText(document.getText());
-      this.revealOriginalMap(parsed.entry);
+      this.maps = maps;
+      this.revealOriginalMap(map, point ? { x: point.x, y: point.y } : undefined);
     } catch (error) {
       void vscode.window.showWarningMessage(
         `无法打开原始地图：${error instanceof Error ? error.message : String(error)}`
@@ -466,17 +506,19 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     }
   }
 
-  private revealOriginalMap(map: MapInfoEntry): void {
+  private revealOriginalMap(map: MapInfoEntry, point?: { x: number; y: number }): void {
     this.pendingNpcReveal = undefined;
+    this.pendingOriginalMapPoint = undefined;
     if (this.currentMap?.key === map.key && this.currentMap.originalMapId === map.originalMapId
       && this.currentMap.name === map.name && this.currentMap.parameters === map.parameters
       && this.panel && this.panelReady) {
       this.panel.reveal(vscode.ViewColumn.Active, false);
-      void this.panel.webview.postMessage({ type: 'revealOriginalMap' });
+      void this.panel.webview.postMessage({ type: 'revealOriginalMap', ...(point ? { point } : {}) });
       this.postSidebarState();
       return;
     }
     this.pendingOriginalMapKey = map.key;
+    this.pendingOriginalMapPoint = point;
     this.openMap(map, false);
   }
 
@@ -506,6 +548,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       this.currentMap = undefined;
       this.pendingNpcReveal = undefined;
       this.pendingOriginalMapKey = undefined;
+      this.pendingOriginalMapPoint = undefined;
       this.clearOriginalMapSession();
     }
     this.sourceWorkspaceRoot = sourceRoot;
@@ -622,7 +665,13 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
         return;
       }
       const selected = this.maps.find(map => map.key === message.key);
-      if (selected) this.openMap(selected);
+      if (selected) {
+        // An explicit sidebar selection supersedes any unconsumed link/NPC reveal.
+        this.pendingNpcReveal = undefined;
+        this.pendingOriginalMapKey = undefined;
+        this.pendingOriginalMapPoint = undefined;
+        this.openMap(selected);
+      }
     }
   }
 
@@ -753,6 +802,8 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       this.panel.onDidDispose(() => {
         this.panel = undefined;
         this.panelReady = false;
+        this.pendingOriginalMapKey = undefined;
+        this.pendingOriginalMapPoint = undefined;
         this.clearOriginalMapSession();
       });
     } else {
@@ -822,7 +873,11 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       : undefined;
     if (revealNpc) this.pendingNpcReveal = undefined;
     const originalMap = this.pendingOriginalMapKey === map.key;
-    if (originalMap) this.pendingOriginalMapKey = undefined;
+    const revealPoint = originalMap ? this.pendingOriginalMapPoint : undefined;
+    if (originalMap) {
+      this.pendingOriginalMapKey = undefined;
+      this.pendingOriginalMapPoint = undefined;
+    }
 
     let warning = '';
     if (!reference) {
@@ -883,6 +938,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       entityWarnings: entities.warnings,
       revealNpc,
       originalMap,
+      revealPoint,
       markerFile: isFile(this.markerFile) ? path.basename(this.markerFile) : '',
       warning,
     });

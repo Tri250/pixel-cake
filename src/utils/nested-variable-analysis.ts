@@ -1,8 +1,12 @@
-import { normalizeScriptVariableName } from './variable-statistics';
+import { findScriptVariables, normalizeScriptVariableName } from './variable-statistics';
 import { isScriptCommentLine } from './script-labels';
+import { EngineId } from '../types';
+import { computeStaticNumericOperation, evaluateStaticFormula } from './script-static-arithmetic';
+import { runtimePreviewOutputIndexes, runtimePreviewOutputFamilyIndexes, runtimePreviewImplicitOutputs } from '../ui-dialog/preview-command-outputs';
 
 const MAX_INFERRED_VALUES = 512;
 const MAX_PERSONAL_FLAG = 1024;
+const truncatedValueSets = new WeakSet<ReadonlySet<string>>();
 const VARIABLE_NAME = /^(?:[PDMNSIGAUTJZ]\d+|(?:GL|[NSLD])\$[A-Za-z0-9_\u3400-\u9fff]+)$/i;
 const CONCRETE_VARIABLE = /(?:[NSLD]\$[A-Za-z0-9_\u3400-\u9fff]+|GL\$[A-Za-z0-9_\u3400-\u9fff]+|[PDMNSIGAUTJZ]\d+)/gi;
 
@@ -24,6 +28,8 @@ export interface NestedVariableResolution extends NestedVariableReference {
   variables: string[];
   status: NestedVariableResolutionStatus;
   evidence: Array<'data-flow' | 'explicit-family'>;
+  reasons?: string[];
+  trace?: Array<{ line: number; description: string }>;
 }
 
 export interface PersonalFlagReference {
@@ -39,11 +45,14 @@ export interface PersonalFlagReference {
 export interface PersonalFlagResolution extends PersonalFlagReference {
   flags: string[];
   status: NestedVariableResolutionStatus;
+  reasons?: string[];
+  trace?: Array<{ line: number; description: string }>;
 }
 
 export interface NestedVariableAnalysis {
   references: NestedVariableResolution[];
   personalFlags: PersonalFlagResolution[];
+  /** Bounded may-values observed at program points, not final runtime values or a completeness proof. */
   inferredValues: ReadonlyMap<string, ReadonlySet<string>>;
 }
 
@@ -88,6 +97,7 @@ export interface NestedDatabaseFieldResult {
 }
 
 export interface NestedVariableAnalysisOptions {
+  engine?: EngineId;
   /** Statistics/candidates use the active engine's flag bounds; legacy callers retain 1..1024. */
   personalFlagRange?: { min: number; max: number };
   /** Ctrl+F12 local initial values; never writes back to server persistence. */
@@ -183,6 +193,7 @@ interface ListLineConstraint {
 }
 
 interface DynamicMoveConstraint {
+  sourceLine?: number;
   targetBase: string;
   targetExpression: string;
   expression: string;
@@ -196,6 +207,7 @@ interface DynamicMoveResult {
 }
 
 interface ExtractConstraint {
+  sourceLine?: number;
   kind: 'extract';
   delimiter: string;
   sourceExpression: string;
@@ -203,15 +215,17 @@ interface ExtractConstraint {
   label: string;
 }
 
-type AssignmentConstraint = MoveConstraint | FormulaConstraint | RangeConstraint |
-  ValuesConstraint | TableCellConstraint | ListLineConstraint;
+type AssignmentConstraint = (MoveConstraint | FormulaConstraint | RangeConstraint |
+  ValuesConstraint | TableCellConstraint | ListLineConstraint) & { sourceLine?: number; label?: string };
 
 interface EventParameter {
   values: Set<string>;
   complete: boolean;
+  trace?: Array<{ line: number; description: string }>;
 }
 
 interface EventParameterSource {
+  sourceLine?: number;
   targetLabel: string;
   callerLabel: string;
   arguments: string[];
@@ -234,6 +248,8 @@ interface TableContext {
 }
 
 interface ParsedScript {
+  engine?: EngineId;
+  truncatedTargets: Set<string>;
   assignments: AssignmentConstraint[];
   dynamicMoves: DynamicMoveConstraint[];
   extracts: ExtractConstraint[];
@@ -384,26 +400,476 @@ export function analyzeNestedVariables(
   }
   const parsed = parseScript(activeText, options, labelsByLine, references);
   const inferredValues = solveValues(parsed);
-  const completeVariables = solveCompleteness(parsed, inferredValues);
+  solveCompleteness(parsed, inferredValues);
   const explicitVariables = collectConcreteVariables(activeText, references);
-  const resolved = references.map(reference => resolveReference(
-    reference,
-    inferredValues,
-    completeVariables,
-    parsed,
-    explicitVariables,
-    labelsByLine[reference.line] || '',
-  ));
-  const personalFlags = personalFlagReferences.map(reference => resolvePersonalFlagReference(
-    reference,
-    inferredValues,
-    completeVariables,
-    parsed,
-    labelsByLine[reference.line] || '',
-    options.personalFlagRange,
-  ));
+  const flow = solveSourceFlow(activeText, parsed, inferredValues, references, personalFlagReferences);
+  const resolved = references.map(reference => {
+    const state = flow.get(reference.line) || emptyFlowState();
+    return { ...resolveReference(reference, state.values, state.complete, parsed,
+      explicitVariables, labelsByLine[reference.line] || ''), ...flowEvidence(reference.expression, state) };
+  });
+  const personalFlags = personalFlagReferences.map(reference => {
+    const state = flow.get(reference.line) || emptyFlowState();
+    return { ...resolvePersonalFlagReference(reference, state.values, state.complete, parsed,
+      labelsByLine[reference.line] || '', options.personalFlagRange),
+    ...flowEvidence(reference.content + ' ' + (reference.countExpression || ''), state) };
+  });
 
-  return { references: resolved, personalFlags, inferredValues };
+  const observedValues = new Map<string, Set<string>>();
+  for (const state of flow.values()) for (const [name, values] of state.values) {
+    if (isVariableName(name)) mergeValues(observedValues, name, values);
+  }
+  return { references: resolved, personalFlags, inferredValues: observedValues };
+}
+
+interface FlowState {
+  values: Map<string, Set<string>>;
+  complete: Map<string, boolean>;
+  traces: Map<string, Array<{ line: number; description: string }>>;
+  reasons: Map<string, string[]>;
+}
+
+function emptyFlowState(): FlowState {
+  return { values: new Map(), complete: new Map(), traces: new Map(), reasons: new Map() };
+}
+
+function cloneFlowState(state: FlowState): FlowState {
+  return { values: new Map(state.values), complete: new Map(state.complete),
+    traces: new Map(state.traces), reasons: new Map(state.reasons) };
+}
+
+function expressionDependencies(expression: string): string[] {
+  const names = new Set([...findScriptVariables(expression)].map(item => item.name));
+  for (const match of expression.matchAll(/<\$GLOBAL\s*\(\s*EXCEL(\d+)\s*\)>/gi)) names.add(`__EXCEL${Number(match[1])}`);
+  for (const match of expression.matchAll(/<\$([A-Za-z0-9_.\u3400-\u9fff]+)\s*\(/gi)) {
+    if (!/^(STR|CSTR|GLOBAL)$/i.test(match[1])) names.add(`__CSV_${match[1].toUpperCase().replace(/\.ROW$/, '')}`);
+  }
+  return [...names];
+}
+
+function flowEvidence(expression: string, state: FlowState): {
+  reasons: string[]; trace: Array<{ line: number; description: string }>;
+} {
+  const names = expressionDependencies(expression);
+  // Include the concrete inner slot selected by a simple dynamic suffix in the trace.
+  for (const reference of extractNestedVariableReferences(expression)) {
+    const suffix = isVariableName(reference.expression) ? state.values.get(normalizeScriptVariableName(reference.expression))
+      : /^\d+$/.test(reference.expression) ? new Set([reference.expression]) : undefined;
+    if (suffix) names.push(...constructVariableNames(reference.base, suffix));
+  }
+  const reasons = [...new Set(names.flatMap(name => state.reasons.get(name) || []))];
+  const trace = new Map<string, { line: number; description: string }>();
+  for (const name of names) for (const step of state.traces.get(name) || []) {
+    trace.set(`${step.line}:${step.description}`, step);
+  }
+  return { reasons, trace: [...trace.values()].sort((a, b) => a.line - b.line).slice(-8) };
+}
+
+/** Bounded may-analysis. Strong updates are local to a program point, never a global INC recurrence. */
+function solveSourceFlow(
+  text: string,
+  parsed: ParsedScript,
+  legacyValues: ReadonlyMap<string, Set<string>>,
+  references: readonly NestedVariableReference[],
+  flags: readonly PersonalFlagReference[],
+): Map<number, FlowState> {
+  const lines = text.split(/\r\n|\r|\n/);
+  const labelsByLine = collectLabelsByLine(text);
+  const labels = new Map<string, number>();
+  const ends = new Map<number, number>();
+  const roots = [0];
+  let lastRoot = 0;
+  for (let i = 0; i < lines.length; i++) {
+    const label = /^\s*\[@([^\]]+)\]/.exec(lines[i]);
+    if (!label) continue;
+    if (i > lastRoot) ends.set(lastRoot, i);
+    if (i !== 0) roots.push(i);
+    lastRoot = i;
+    labels.set(label[1].trim().toUpperCase(), i);
+  }
+  ends.set(lastRoot, lines.length);
+  const assignments = new Map<number, AssignmentConstraint[]>();
+  const dynamicMoves = new Map<number, DynamicMoveConstraint[]>();
+  const extracts = new Map<number, ExtractConstraint[]>();
+  const writers = new Map<string, Set<string>>();
+  for (const assignment of parsed.assignments) {
+    if (assignment.sourceLine === undefined) continue;
+    const group = assignments.get(assignment.sourceLine) || [];
+    group.push(assignment); assignments.set(assignment.sourceLine, group);
+    const names = writers.get(assignment.target) || new Set<string>();
+    names.add(assignment.label || ''); writers.set(assignment.target, names);
+  }
+  for (const move of parsed.dynamicMoves) {
+    if (move.sourceLine === undefined) continue;
+    const group = dynamicMoves.get(move.sourceLine) || [];
+    group.push(move); dynamicMoves.set(move.sourceLine, group);
+  }
+  for (const extract of parsed.extracts) {
+    if (extract.sourceLine === undefined) continue;
+    const group = extracts.get(extract.sourceLine) || [];
+    group.push(extract); extracts.set(extract.sourceLine, group);
+  }
+  // Only values needed to name a dynamic reference (and their transitive inputs) get states.
+  const relevant = new Set<string>();
+  const addDependencies = (expression: string) => {
+    for (const name of expressionDependencies(expression)) relevant.add(name);
+    for (const nested of extractNestedVariableReferences(expression)) {
+      for (const name of parsed.explicitVariables) if (name.startsWith(normalizeScriptVariableName(nested.base))) relevant.add(name);
+    }
+  };
+  for (const reference of references) addDependencies(reference.expression);
+  for (const flag of flags) addDependencies(flag.content + ' ' + (flag.countExpression || ''));
+  for (const source of parsed.eventSources) for (const expression of source.arguments) addDependencies(expression);
+  for (let round = 0; round < 32; round++) {
+    const count = relevant.size;
+    for (const assignment of parsed.assignments) if (relevant.has(assignment.target)) {
+      if ('expression' in assignment) addDependencies(assignment.expression);
+      if ('rowExpression' in assignment) addDependencies(assignment.rowExpression + ' ' + assignment.columnExpression);
+      if ('lineExpression' in assignment) addDependencies(assignment.lineExpression);
+    }
+    for (const extract of parsed.extracts) if (extract.targets.some(target => relevant.has(target))) addDependencies(extract.sourceExpression);
+    for (const move of parsed.dynamicMoves) if ([...relevant].some(name => name.startsWith(normalizeScriptVariableName(move.targetBase)))) {
+      addDependencies(move.expression); addDependencies(move.targetExpression);
+    }
+    for (const line of lines) {
+      const arithmetic = /^\s*(?:#(?:ACT|ELSEACT)\s+)?(?:INC|DEC|MUL|DIV)\s+([^\s]+)\s+(.*)$/i.exec(line);
+      if (arithmetic && relevant.has(normalizeAssignmentTarget(arithmetic[1]) || '')) addDependencies(arithmetic[2]);
+    }
+    if ([...relevant].some(name => /^__EXCEL\d+$/.test(name))) {
+      for (const read of parsed.tables.excelReads) addDependencies(read.rowExpression);
+    }
+    if (count === relevant.size) break;
+  }
+  const commands: Array<{ name: string; rest: string; action: boolean; condition: boolean; foreign: boolean }> = [];
+  let action = true;
+  let condition = false;
+  for (const line of lines) {
+    if (/^\s*\[@/.test(line)) { action = true; condition = false; }
+    const directive = /^\s*#(ACT|ELSEACT|SAY|ELSESAY|IF|OR)\b\s*(.*)$/i.exec(line);
+    if (directive) {
+      action = /^(ACT|ELSEACT)$/i.test(directive[1]);
+      condition = /^(IF|OR)$/i.test(directive[1]);
+    }
+    const content = directive ? directive[2] : line;
+    const command = /^\s*(?:<\$[^>]+>\.)?([A-Za-z]+)\b\s*([\s\S]*)$/.exec(content);
+    commands.push({ name: command?.[1].toUpperCase() || '', rest: command?.[2] || '',
+      action: action && !isScriptCommentLine(line), condition: condition && !isScriptCommentLine(line),
+      foreign: /^\s*<\$[^>]+>\./.test(content) });
+  }
+  const successors: number[][] = lines.map(() => []);
+  for (const root of roots) {
+    const end = ends.get(root) || lines.length;
+    for (let i = root; i < end - 1; i++) successors[i] = [i + 1];
+    for (let i = root; i < end; i++) {
+      if (!/^\s*#IF\b/i.test(lines[i])) continue;
+      let join = i + 1;
+      while (join < end && !/^\s*#IF\b/i.test(lines[join])) join++;
+      const sections: Array<{ line: number; positive: boolean }> = [];
+      for (let cursor = i + 1; cursor < join; cursor++) {
+        const section = /^\s*#(ACT|SAY|ELSEACT|ELSESAY)\b/i.exec(lines[cursor]);
+        if (section) sections.push({ line: cursor, positive: !/^ELSE/i.test(section[1]) });
+      }
+      if (!sections.length) continue;
+      // ACT/SAY belong to the true branch, ELSEACT/ELSESAY to the false branch,
+      // regardless of their textual order. Same-branch sections may be separated
+      // by opposite-branch sections; never execute those as a sequential write.
+      const after = join < end ? [join] : [];
+      const nextByBranch = new Map<boolean, number[]>([[true, after], [false, after]]);
+      for (let section = sections.length - 1; section >= 0; section--) {
+        const current = sections[section];
+        const sectionEnd = sections[section + 1]?.line ?? join;
+        successors[sectionEnd - 1] = nextByBranch.get(current.positive)!;
+        nextByBranch.set(current.positive, [current.line]);
+      }
+      // Missing branches proceed to the next condition; terminal commands below
+      // still override these normal edges, but only on their own branch.
+      successors[sections[0].line - 1] = [...new Set([
+        ...nextByBranch.get(true)!, ...nextByBranch.get(false)!,
+      ])];
+    }
+  }
+  const gotoTargets = new Set<number>();
+  for (let i = 0; i < commands.length; i++) {
+    const command = commands[i];
+    if (!command.action) continue;
+    if (command.name === 'GOTO') {
+      const match = /^@([^\s()<>]+)\s*$/.exec(command.rest);
+      const target = match ? labels.get(match[1].toUpperCase()) : undefined;
+      if (target !== undefined) { successors[i] = [target]; gotoTargets.add(target); }
+      else successors[i] = [];
+    } else if (/^(BREAK|CLOSE|EXIT)$/.test(command.name)) successors[i] = [];
+  }
+  const write = (state: FlowState, target: string, result: ValueResult | undefined, line: number,
+    expression: string, description: string, weak = false) => {
+    if (!relevant.has(target)) return;
+    const evidence = flowEvidence(expression, state);
+    for (const match of expression.matchAll(/<\$SCRIPTPARAM(\d+)>/gi)) {
+      const parameter = parsed.eventParameters.get(labelsByLine[line] || '')?.get(Number(match[1]));
+      evidence.trace.push(...(parameter?.trace || []));
+    }
+    const next = result?.values || new Set<string>();
+    const bounded = new Set([...next].slice(0, MAX_INFERRED_VALUES));
+    const isComplete = result?.complete === true && next.size <= MAX_INFERRED_VALUES && !weak;
+    if (weak) for (const value of state.values.get(target) || []) {
+      if (bounded.size < MAX_INFERRED_VALUES) bounded.add(value);
+    }
+    state.values.set(target, bounded);
+    state.complete.set(target, isComplete);
+    const display = [...bounded].slice(0, 4).join(',');
+    state.traces.set(target, [...evidence.trace, { line, description: `${description} → ${display || '未知'}${bounded.size > 4 ? '…' : ''}` }].slice(-8));
+    state.reasons.set(target, isComplete ? [] : [...new Set([...evidence.reasons,
+      !result ? '输入值或命令结果无法静态确定' : next.size > MAX_INFERRED_VALUES ? '可能值超过分析上限' : weak ? '存在可能覆盖或不完整的动态写入' : '输入值域不完整'])]);
+  };
+  const transfer = (line: number, incoming: FlowState): FlowState => {
+    const state = cloneFlowState(incoming);
+    const command = commands[line];
+    const label = labelsByLine[line] || '';
+    if (!command.action && !command.condition) return state;
+    if (command.foreign) {
+      for (const target of relevant) {
+        state.complete.set(target, false);
+        state.reasons.set(target, ['对象前缀的变量归属尚未建模']);
+      }
+      return state;
+    }
+    for (const assignment of assignments.get(line) || []) {
+      if (!relevant.has(assignment.target)) continue;
+      write(state, assignment.target, evaluateAssignment(assignment, incoming.values, incoming.complete, parsed), line,
+        'expression' in assignment ? assignment.expression : command.rest, `${command.name} ${assignment.target}`);
+    }
+    for (const move of dynamicMoves.get(line) || []) {
+      const resolved = evaluateDynamicMove(move, incoming.values, incoming.complete, parsed);
+      const targets = resolved.targetsComplete ? resolved.targets : [...new Set([...resolved.targets,
+        ...[...relevant].filter(name => name.startsWith(normalizeScriptVariableName(move.targetBase)))])];
+      for (const target of targets) write(state, target, resolved.value, line,
+        move.expression + ' ' + move.targetExpression, `MOV ${target}（动态目标）`, !resolved.targetsComplete || targets.length !== 1);
+    }
+    for (const extract of extracts.get(line) || []) {
+      const result = evaluateTemplate(extract.sourceExpression, label, incoming.values, incoming.complete, parsed);
+      for (let index = 0; index < extract.targets.length; index++) {
+        const fields = new Set<string>();
+        let valid = result?.complete === true;
+        for (const value of result?.values || []) {
+          const field = value.split(extract.delimiter)[index];
+          if (field === undefined) valid = false; else fields.add(field.trim());
+        }
+        write(state, extract.targets[index], result ? { values: fields, complete: valid } : undefined, line,
+          extract.sourceExpression, `EXTRACTSTRING ${extract.targets[index]}`);
+      }
+    }
+    const parts = splitArguments(command.rest);
+    if (command.action && command.name === 'CSVOPENCACHE') {
+      const alias = tableAliasFromPath(parts[0] || '');
+      write(state, `__CSV_${alias}`, parts[0] && !/<\$/.test(parts[0]) ? { values: new Set([parts[0]]), complete: true } : undefined,
+        line, command.rest, `CSVOPENCACHE ${alias}`);
+    } else if (command.action && command.name === 'READEXCEL') {
+      for (const target of relevant) if (/^__EXCEL\d+$/.test(target)) {
+        const column = target.slice('__EXCEL'.length);
+        const result = parts.length >= 2 ? evaluateTableCell(parts[0], parts.slice(1).join(' '), column,
+          'excel', 1, label, incoming.values, incoming.complete, parsed) : undefined;
+        write(state, target, result, line, command.rest, `READEXCEL Excel${column}`);
+      }
+    } else if (command.action && /^(INC|DEC|MUL|DIV)$/.test(command.name)) {
+      const target = normalizeAssignmentTarget(parts[0] || '');
+      if (target) {
+        const leftExpression = parts.length === 3 && /^(MUL|DIV)$/.test(command.name) ? parts[1] : target;
+        const rightExpression = parts.length === 3 ? parts[2] : parts[1];
+        const left = evaluateFlagExpression(leftExpression, label, incoming.values, incoming.complete, parsed);
+        const right = rightExpression === undefined ? undefined : evaluateFlagExpression(rightExpression, label, incoming.values, incoming.complete, parsed);
+        const values = new Set<string>();
+        let complete = left?.complete === true && right?.complete === true;
+        const numeric = /^(?:[PDMNIGUJ]\d+|N\$)/i.test(target);
+        const validArity = /^(INC|DEC)$/.test(command.name) ? parts.length === 2
+          : parsed.engine === 'GEE' ? parts.length === 2 || parts.length === 3 : parts.length === 3;
+        for (const a of left?.values || []) for (const b of right?.values || []) {
+          const value = numeric && validArity ? computeStaticNumericOperation(a, b, command.name as 'INC' | 'DEC' | 'MUL' | 'DIV', parsed.engine) : undefined;
+          if (value === undefined || values.size >= MAX_INFERRED_VALUES) complete = false;
+          else values.add(value);
+        }
+        write(state, target, values.size ? { values, complete } : undefined, line,
+          leftExpression + ' ' + (rightExpression || ''), `${command.name} ${target} ${rightExpression || ''}`);
+      } else {
+        const dynamic = extractNestedVariableReferences(parts[0] || '')[0];
+        if (dynamic) for (const possible of relevant) {
+          if (possible.startsWith(normalizeScriptVariableName(dynamic.base))) write(state, possible, undefined, line,
+            command.rest, `${command.name}（动态目标尚未求值）`, true);
+        }
+      }
+    } else if (/^(READCONFIGFILEITEM|MOVR)$/.test(command.name) && !(assignments.get(line)?.length)) {
+      const rawTarget = command.name === 'MOVR' ? parts[0] : parts[parts.length - 1];
+      const target = normalizeAssignmentTarget(rawTarget || '');
+      if (target) write(state, target, undefined, line, command.rest, `${command.name}（读取失败或未支持）`);
+    } else if (command.name === 'TEXTLENGTH') {
+      const target = normalizeAssignmentTarget(parts[parts.length - 1] || '');
+      if (target) write(state, target, undefined, line, command.rest, `${command.name}（运行时输出）`);
+    } else if (command.name === 'FORMULATION' && parsed.engine === '996PC' &&
+        !assignments.get(line)?.length && parts.length >= 3 && /^[01]$/.test(parts[parts.length - 1])) {
+      const target = normalizeAssignmentTarget(parts[parts.length - 2]);
+      if (target) write(state, target, undefined, line, command.rest, 'FORMULATION（结果模式尚未建模）');
+    }
+    // Reuse the audited, pure output registry: condition commands can write too.
+    const modeledTargets = new Set((assignments.get(line) || []).map(assignment => assignment.target));
+    for (const index of runtimePreviewOutputIndexes(command.name, parsed.engine || 'GOM') || []) {
+      const target = normalizeAssignmentTarget(parts[index] || '');
+      if (target && !modeledTargets.has(target)) write(state, target, undefined, line, command.rest,
+        `${command.name}（未建模的输出值）`);
+      if (!target) {
+        const dynamic = extractNestedVariableReferences(parts[index] || '')[0];
+        if (dynamic) for (const possible of relevant) if (possible.startsWith(normalizeScriptVariableName(dynamic.base))) {
+          write(state, possible, undefined, line, command.rest, `${command.name}（动态输出目标）`, true);
+        }
+      }
+    }
+    for (const target of runtimePreviewImplicitOutputs(command.name, parsed.engine || 'GOM') || []) {
+      write(state, target, undefined, line, command.rest, `${command.name}（隐式输出）`);
+    }
+    for (const index of runtimePreviewOutputFamilyIndexes(command.name, parsed.engine || 'GOM') || []) {
+      const prefix = normalizeAssignmentTarget(parts[index] || '');
+      if (prefix) for (const target of relevant) if (target.startsWith(prefix) && /^\d+$/.test(target.slice(prefix.length))) {
+        write(state, target, undefined, line, command.rest, `${command.name}（输出变量族）`);
+      }
+    }
+    const executable = lines[line].replace(/^\s*#(?:ACT|ELSEACT)\b\s*/i, '');
+    if (/^\s*#CALL(?:EX)?\b/i.test(executable) ||
+        (command.name === 'GOTO' && successors[line].length === 0) ||
+        /^(LOOPGOTO|RANDOMGOTO|GOTOLABEL|GOTOLABELEX|HCALL)$/.test(command.name) ||
+        (command.name === 'SUM' && parsed.engine === 'GEE') ||
+        (command.name === 'MOV' && /^<\$CSTR\s*\(/i.test(parts[0] || ''))) {
+      for (const target of relevant) {
+        state.complete.set(target, false);
+        state.reasons.set(target, ['跨文件、隐式累加或其他对象的写入尚未建模']);
+      }
+    }
+    return state;
+  };
+  let finalStates = new Map<number, FlowState>();
+  // UI parameters use their caller's SAY snapshot, not a global final value pool.
+  for (let parameterRound = 0; parameterRound < 8; parameterRound++) {
+    const states = new Map<number, FlowState>();
+    const queue: number[] = [];
+    const queued = new Set<number>();
+    const visits = new Map<number, number>();
+    const enqueue = (line: number, state: FlowState) => {
+      const old = states.get(line);
+      const joined = old ? joinFlowStates(old, state) : state;
+      if (old && sameFlowValues(old, joined)) return;
+      states.set(line, joined);
+      if (!queued.has(line)) { queue.push(line); queued.add(line); }
+    };
+    for (const root of roots) {
+      const rootLabel = labelsByLine[root] || '';
+      const hasUiEntry = parsed.eventSources.some(source => source.kind === 'call' && source.targetLabel === rootLabel);
+      if (gotoTargets.has(root) && root !== 0 && !hasUiEntry) continue;
+      const seed = emptyFlowState();
+      const label = labelsByLine[root] || '';
+      for (const target of relevant) {
+        if (/^__EXCEL\d+$/.test(target)) {
+          seed.values.set(target, new Set()); seed.complete.set(target, false);
+          seed.reasons.set(target, ['该程序点尚未读取 Excel 列']);
+          continue;
+        }
+        if (target.startsWith('__CSV_')) {
+          const alias = target.slice('__CSV_'.length);
+          const historical = commands.some((command, line) => command.action && command.name === 'CSVOPENCACHE' &&
+            labelsByLine[line] !== label && tableAliasFromPath(splitArguments(command.rest)[0] || '') === alias);
+          seed.values.set(target, historical ? new Set(parsed.tables.csvAliases.get(alias) || []) : new Set());
+          seed.complete.set(target, false);
+          seed.reasons.set(target, ['CSV 缓存尚未在当前入口确定加载']);
+          continue;
+        }
+        const otherWriter = [...(writers.get(target) || [])].some(writer => writer !== label);
+        if (!otherWriter || !legacyValues.has(target)) continue;
+        seed.values.set(target, legacyValues.get(target)!);
+        seed.complete.set(target, false);
+        seed.reasons.set(target, ['其他入口存在历史写入，运行时初值未确定']);
+      }
+      enqueue(root, seed);
+    }
+    for (let cursor = 0; cursor < queue.length; cursor++) {
+      const line = queue[cursor]; queued.delete(line);
+      const count = (visits.get(line) || 0) + 1; visits.set(line, count);
+      const incoming = states.get(line)!;
+      if (count > 32) {
+        const widened = cloneFlowState(incoming);
+        for (const target of relevant) {
+          widened.complete.set(target, false);
+          widened.reasons.set(target, ['循环或控制流达到分析上限']);
+        }
+        states.set(line, widened);
+        // An incomplete state must reach every dependent reference, even after stopping iteration.
+        const pending = [...successors[line]]; const seen = new Set<number>();
+        while (pending.length) {
+          const next = pending.pop()!;
+          if (seen.has(next)) continue; seen.add(next);
+          const old = states.get(next);
+          states.set(next, old ? joinFlowStates(old, widened) : widened);
+          pending.push(...successors[next]);
+        }
+        continue;
+      }
+      const outgoing = transfer(line, incoming);
+      for (const next of successors[line]) enqueue(next, outgoing);
+    }
+    finalStates = states;
+    if (!updateSourceParameters(parsed, states)) break;
+    if (parameterRound === 7) {
+      for (const byIndex of parsed.eventParameters.values()) for (const parameter of byIndex.values()) parameter.complete = false;
+      for (const state of states.values()) for (const target of relevant) state.complete.set(target, false);
+    }
+  }
+  return finalStates;
+}
+
+function joinFlowStates(left: FlowState, right: FlowState): FlowState {
+  const result = cloneFlowState(left);
+  for (const name of new Set([...left.values.keys(), ...right.values.keys(), ...left.complete.keys(), ...right.complete.keys()])) {
+    const all = new Set([...(left.values.get(name) || []), ...(right.values.get(name) || [])]);
+    result.values.set(name, new Set([...all].slice(0, MAX_INFERRED_VALUES)));
+    const complete = left.complete.get(name) === true && right.complete.get(name) === true && all.size <= MAX_INFERRED_VALUES;
+    result.complete.set(name, complete);
+    result.reasons.set(name, complete ? [] : [...new Set([...(left.reasons.get(name) || []), ...(right.reasons.get(name) || []),
+      all.size > MAX_INFERRED_VALUES ? '分支可能值超过分析上限' : '部分路径的输入值未确定'])]);
+    const traces = new Map<string, { line: number; description: string }>();
+    for (const step of [...(left.traces.get(name) || []), ...(right.traces.get(name) || [])]) traces.set(`${step.line}:${step.description}`, step);
+    result.traces.set(name, [...traces.values()].sort((a, b) => a.line - b.line).slice(-8));
+  }
+  return result;
+}
+
+function sameFlowValues(left: FlowState, right: FlowState): boolean {
+  if (left.values.size !== right.values.size || left.complete.size !== right.complete.size) return false;
+  for (const [name, values] of left.values) if (!setEquals(values, right.values.get(name) || new Set())) return false;
+  for (const [name, complete] of left.complete) if (right.complete.get(name) !== complete) return false;
+  return true;
+}
+
+function updateSourceParameters(parsed: ParsedScript, states: ReadonlyMap<number, FlowState>): boolean {
+  let changed = false;
+  for (const [label, byIndex] of parsed.eventParameters) {
+    const sources = selectEventSources(parsed.eventSources, label);
+    for (const [index, parameter] of byIndex) {
+      const values = new Set<string>();
+      const trace = new Map<string, { line: number; description: string }>();
+      let complete = sources.length > 0;
+      for (const source of sources) {
+        const state = source.sourceLine === undefined ? undefined : states.get(source.sourceLine);
+        const expression = source.arguments[index - 1];
+        const result = state && expression ? evaluateTemplate(expression, source.callerLabel, state.values, state.complete, parsed) : undefined;
+        if (!result) { complete = false; continue; }
+        complete = complete && result.complete;
+        for (const step of flowEvidence(expression, state!).trace) trace.set(`${step.line}:${step.description}`, step);
+        const step = { line: source.sourceLine || 0, description: `NPC参数${index} ← ${[...result.values].slice(0, 4).join(',')}` };
+        trace.set(`${step.line}:${step.description}`, step);
+        for (const value of result.values) {
+          if (!values.has(value) && values.size >= MAX_INFERRED_VALUES) complete = false;
+          else values.add(stripMatchingQuotes(value.trim()));
+        }
+      }
+      if (!setEquals(values, parameter.values) || parameter.complete !== complete) changed = true;
+      parameter.values = values; parameter.complete = complete; parameter.trace = [...trace.values()].slice(-8);
+    }
+  }
+  return changed;
 }
 
 /**
@@ -422,18 +888,22 @@ export function resolveScriptValueExpressions(
   const references = extractNestedVariableReferences(activeText);
   const parsed = parseScript(activeText, options, labelsByLine, references);
   const inferredValues = solveValues(parsed);
-  const completeVariables = solveCompleteness(parsed, inferredValues);
+  solveCompleteness(parsed, inferredValues);
+  const requestedReferences = requests.map(request => ({ raw: request.expression, base: 'N', expression: request.expression,
+    start: 0, end: 0, baseStart: 0, baseEnd: 0, line: request.line, depth: 0 }));
+  const flow = solveSourceFlow(activeText, parsed, inferredValues, [...references, ...requestedReferences], []);
 
   return requests.map(request => {
     const expression = request.expression.trim();
     const label = labelsByLine[Math.max(0, request.line)] || '';
+    const state = flow.get(request.line) || emptyFlowState();
     let result: ValueResult | undefined;
     if (isVariableName(expression)) {
       result = evaluateStrInner(
         expression,
         label,
-        inferredValues,
-        completeVariables,
+        state.values,
+        state.complete,
         parsed,
         0,
       );
@@ -441,8 +911,8 @@ export function resolveScriptValueExpressions(
       result = evaluateTemplate(
         expression,
         label,
-        inferredValues,
-        completeVariables,
+        state.values,
+        state.complete,
         parsed,
       );
     }
@@ -478,13 +948,26 @@ function parseScript(
     listCache: new Map(),
   };
   let currentLabel = '';
+  let actionContext = true;
 
-  for (const line of text.split(/\r\n|\r|\n/)) {
+  for (const [sourceLine, rawLine] of text.split(/\r\n|\r|\n/).entries()) {
+    let line = rawLine;
+    const firstAssignment = assignments.length;
+    const firstMove = dynamicMoves.length;
+    const firstExtract = extracts.length;
+    try {
     if (isScriptCommentLine(line)) continue;
     const label = /^\s*\[@([^\]]+)\]/.exec(line);
     if (label) {
       currentLabel = label[1].trim().toUpperCase();
+      actionContext = true;
       continue;
+    }
+    const directive = /^\s*#(ACT|ELSEACT|SAY|ELSESAY|IF|OR)\b\s*(.*)$/i.exec(line);
+    if (directive) {
+      actionContext = /^(ACT|ELSEACT)$/i.test(directive[1]);
+      if (!directive[2]) continue;
+      line = directive[2];
     }
 
     const command = /^\s*(?:<\$[^>]+>\.)?([A-Za-z]+)\b([\s\S]*)$/i.exec(line);
@@ -498,9 +981,11 @@ function parseScript(
         callerLabel: currentLabel,
         arguments: splitTopLevel(rest, ','),
         kind: 'check',
+        sourceLine,
       });
       continue;
     }
+    if (!actionContext) continue;
 
     if (name === 'MOV') {
       const move = /^(\S+)(?:\s+([\s\S]*))?$/.exec(rest);
@@ -600,7 +1085,9 @@ function parseScript(
             values: new Set(result.values.slice(0, MAX_INFERRED_VALUES)),
             complete: result.complete && result.values.length <= MAX_INFERRED_VALUES,
           });
-        }
+        } else incompleteTargets.add(target);
+      } else if (target) {
+        incompleteTargets.add(target);
       }
       continue;
     }
@@ -668,11 +1155,21 @@ function parseScript(
       const target = normalizeAssignmentTarget(splitArguments(rest)[0] || '');
       if (target) incompleteTargets.add(target);
     }
+    } finally {
+      for (const assignment of assignments.slice(firstAssignment)) {
+        assignment.sourceLine = sourceLine;
+        assignment.label = currentLabel;
+      }
+      for (const move of dynamicMoves.slice(firstMove)) move.sourceLine = sourceLine;
+      for (const extract of extracts.slice(firstExtract)) extract.sourceLine = sourceLine;
+    }
   }
 
   addExtractFieldAssignments(assignments, extracts);
   initializeEventParameters(eventSources, eventParameters);
   return {
+    engine: options.engine || 'GOM',
+    truncatedTargets: new Set(),
     assignments,
     dynamicMoves,
     extracts,
@@ -725,13 +1222,13 @@ function solveValues(parsed: ParsedScript): Map<string, Set<string>> {
         completeness,
         parsed,
       );
-      if (result) changed = mergeValues(values, assignment.target, result.values) || changed;
+      if (result) changed = mergeParsedValues(parsed, values, assignment.target, result.values) || changed;
     }
     for (const dynamicMove of parsed.dynamicMoves) {
       const result = evaluateDynamicMove(dynamicMove, values, completeness, parsed);
       if (!result.value) continue;
       for (const target of result.targets) {
-        changed = mergeValues(values, target, result.value.values) || changed;
+        changed = mergeParsedValues(parsed, values, target, result.value.values) || changed;
       }
     }
     for (const extract of parsed.extracts) {
@@ -746,7 +1243,7 @@ function solveValues(parsed: ParsedScript): Map<string, Set<string>> {
       for (const value of source.values) {
         const fields = value.split(extract.delimiter);
         for (let index = 0; index < extract.targets.length && index < fields.length; index++) {
-          changed = mergeValues(values, extract.targets[index], new Set([fields[index]])) || changed;
+          changed = mergeParsedValues(parsed, values, extract.targets[index], new Set([fields[index]])) || changed;
         }
       }
     }
@@ -771,7 +1268,7 @@ function solveCompleteness(
   for (let iteration = 0; iteration < 64; iteration++) {
     let changed = updateEventParameters(parsed, values, complete);
     for (const [target, assignments] of byTarget) {
-      if (complete.get(target) || parsed.incompleteTargets.has(target)) continue;
+      if (complete.get(target) || parsed.incompleteTargets.has(target) || parsed.truncatedTargets.has(target)) continue;
       const results = assignments.map(assignment => evaluateAssignment(
         assignment,
         values,
@@ -787,7 +1284,7 @@ function solveCompleteness(
       const result = evaluateDynamicMove(dynamicMove, values, complete, parsed);
       if (!result.value?.complete || !result.targetsComplete) continue;
       for (const target of result.targets) {
-        if (!complete.get(target) && !parsed.incompleteTargets.has(target)) {
+        if (!complete.get(target) && !parsed.incompleteTargets.has(target) && !parsed.truncatedTargets.has(target)) {
           complete.set(target, true);
           changed = true;
         }
@@ -837,6 +1334,10 @@ function evaluateAssignment(
     );
   }
 
+  // The independently documented FORMULATION outputs are numeric N registers/N$ names.
+  // Do not coerce string/list/dictionary variables into numeric result registers.
+  if (assignment.kind === 'formula' && !/^N(?:\d+|\$[A-Za-z0-9_\u3400-\u9fff]+)$/i.test(assignment.target)) return undefined;
+
   const evaluated = evaluateTemplate(
     assignment.expression,
     assignment.label,
@@ -848,7 +1349,7 @@ function evaluateAssignment(
 
   const formulaValues = new Set<string>();
   for (const expression of evaluated.values) {
-    const result = calculateSimpleFormula(expression);
+    const result = evaluateStaticFormula(expression, parsed.engine);
     if (result === undefined) return undefined;
     formulaValues.add(result);
   }
@@ -966,7 +1467,7 @@ function evaluateTemplate(
 
   return {
     values: new Set([...combinations].map(value => value.trim())),
-    complete: allComplete,
+    complete: allComplete && !truncatedValueSets.has(combinations),
   };
 }
 
@@ -978,6 +1479,7 @@ function evaluateStrInner(
   parsed: ParsedScript,
   recursionDepth: number,
 ): ValueResult | undefined {
+  if (recursionDepth > 8) return undefined;
   if (isVariableName(inner)) {
     const name = normalizeScriptVariableName(inner);
     const known = values.get(name);
@@ -988,7 +1490,7 @@ function evaluateStrInner(
   const dynamic = extractNestedVariableReferences(inner)
     .find(reference => reference.start === 0 && reference.end === inner.length);
   if (dynamic) {
-    const suffix = evaluateTemplate(
+    const suffix = evaluateStrInner(
       dynamic.expression,
       label,
       values,
@@ -1006,7 +1508,10 @@ function evaluateStrInner(
         allComplete = false;
         continue;
       }
-      for (const value of known) result.add(value);
+      for (const value of known) {
+        if (!result.has(value) && result.size >= MAX_INFERRED_VALUES) allComplete = false;
+        else result.add(value);
+      }
       allComplete = allComplete && complete.get(name) === true;
     }
     if (result.size === 0) return undefined;
@@ -1285,12 +1790,15 @@ function evaluateTablePlaceholder(
 
   const isRowLookup = name.endsWith('.ROW');
   const alias = isRowLookup ? name.slice(0, -4) : name;
-  const paths = parsed.tables.csvAliases.get(alias);
+  let paths = parsed.tables.csvAliases.get(alias);
+  const flowAlias = `__CSV_${alias}`;
+  const activeComplete = !values.has(flowAlias) || complete.get(flowAlias) === true;
+  if (values.has(flowAlias)) paths = new Set(values.get(flowAlias));
   if (!paths || paths.size === 0) return undefined;
   const args = splitTopLevel(rawArguments, ',').map(value => value.trim());
   if (isRowLookup) {
     if (args.length < 3) return undefined;
-    return evaluateCsvRowLookup(
+    const result = evaluateCsvRowLookup(
       paths,
       args,
       label,
@@ -1299,6 +1807,7 @@ function evaluateTablePlaceholder(
       parsed,
       recursionDepth,
     );
+    return result ? { ...result, complete: result.complete && activeComplete } : undefined;
   }
   if (args.length < 2) return undefined;
 
@@ -1314,7 +1823,8 @@ function evaluateTablePlaceholder(
     parsed,
     recursionDepth,
   ));
-  return mergeValueResults(results);
+  const result = mergeValueResults(results);
+  return result ? { ...result, complete: result.complete && activeComplete } : undefined;
 }
 
 function evaluateExcelColumn(
@@ -1325,6 +1835,11 @@ function evaluateExcelColumn(
   parsed: ParsedScript,
   recursionDepth: number,
 ): ValueResult | undefined {
+  const flowColumn = `__EXCEL${column}`;
+  if (values.has(flowColumn)) {
+    const known = values.get(flowColumn)!;
+    return known.size ? { values: new Set(known), complete: complete.get(flowColumn) === true } : undefined;
+  }
   const reads = parsed.tables.excelReads.filter(read => read.label === label);
   if (reads.length === 0) return undefined;
   return mergeValueResults(reads.map(read => evaluateTableCell(
@@ -1371,11 +1886,11 @@ function evaluateTableCell(
     parsed,
     recursionDepth + 1,
   );
-  const rowIndexes = rowValues
+  const rowIndexes = rowValues?.complete
     ? [...rowValues.values].map(Number).map(value => value - rowBase)
     : table.rows.map((_, index) => index);
   const maximumColumns = table.rows.reduce((maximum, row) => Math.max(maximum, row.length), 0);
-  const columnIndexes = columnValues
+  const columnIndexes = columnValues?.complete
     ? [...columnValues.values].map(Number)
     : Array.from({ length: maximumColumns }, (_, index) => index);
   const result = new Set<string>();
@@ -1610,7 +2125,13 @@ function collectEventCallSources(
     let cursor = marker + 2;
     while (cursor < text.length && !/[\s(>^|/\\\]}]/.test(text[cursor])) cursor++;
     const label = text.slice(marker + 2, cursor).trim().toUpperCase();
-    if (!label || text[cursor] !== '(') {
+    if (!label) {
+      searchFrom = cursor + 1;
+      continue;
+    }
+    if (text[cursor] !== '(') {
+      sources.push({ targetLabel: label, callerLabel: labelsByLine[lineAtOffset(starts, marker)] || '',
+        arguments: [], kind: 'call', sourceLine: lineAtOffset(starts, marker) });
       searchFrom = cursor + 1;
       continue;
     }
@@ -1620,6 +2141,7 @@ function collectEventCallSources(
       continue;
     }
     sources.push({
+      sourceLine: lineAtOffset(starts, marker),
       targetLabel: label,
       callerLabel: labelsByLine[lineAtOffset(starts, marker)] || '',
       arguments: splitTopLevel(text.slice(cursor + 1, close), ','),
@@ -1735,6 +2257,18 @@ function isVariableName(value: string): boolean {
   return VARIABLE_NAME.test(value.trim());
 }
 
+function mergeParsedValues(
+  parsed: ParsedScript,
+  target: Map<string, Set<string>>,
+  name: string,
+  incoming: ReadonlySet<string>,
+): boolean {
+  const changed = mergeValues(target, name, incoming);
+  const retained = target.get(name)!;
+  if ([...incoming].some(value => !retained.has(value))) parsed.truncatedTargets.add(name);
+  return changed;
+}
+
 function mergeValues(
   target: Map<string, Set<string>>,
   name: string,
@@ -1757,39 +2291,25 @@ function mergeValues(
 }
 
 function appendLiteral(values: ReadonlySet<string>, literal: string): Set<string> {
-  return new Set([...values].map(value => value + literal));
+  const result = new Set([...values].map(value => value + literal));
+  if (truncatedValueSets.has(values)) truncatedValueSets.add(result);
+  return result;
 }
 
 function combineValues(left: ReadonlySet<string>, right: ReadonlySet<string>): Set<string> {
   const combined = new Set<string>();
+  if (truncatedValueSets.has(left) || truncatedValueSets.has(right)) truncatedValueSets.add(combined);
   for (const prefix of left) {
     for (const suffix of right) {
-      combined.add(prefix + suffix);
-      if (combined.size >= MAX_INFERRED_VALUES) return combined;
+      const value = prefix + suffix;
+      if (!combined.has(value) && combined.size >= MAX_INFERRED_VALUES) {
+        truncatedValueSets.add(combined);
+        return combined;
+      }
+      combined.add(value);
     }
   }
   return combined;
-}
-
-function calculateSimpleFormula(expression: string): string | undefined {
-  const compact = expression.replace(/\s+/g, '');
-  if (/^[+-]?\d+$/.test(compact)) return String(Number(compact));
-  const match = /^([+-]?\d+)([+\-*/])([+-]?\d+)$/.exec(compact);
-  if (!match) return undefined;
-  const left = Number(match[1]);
-  const right = Number(match[3]);
-  let result: number;
-  switch (match[2]) {
-    case '+': result = left + right; break;
-    case '-': result = left - right; break;
-    case '*': result = left * right; break;
-    case '/':
-      if (right === 0) return undefined;
-      result = Math.trunc(left / right);
-      break;
-    default: return undefined;
-  }
-  return String(result);
 }
 
 function splitArguments(value: string): string[] {

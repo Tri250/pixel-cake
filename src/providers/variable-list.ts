@@ -1,7 +1,10 @@
 import * as path from 'path';
 import * as vscode from 'vscode';
 import { formatVariableGroupLabel } from '../utils/variable-statistics';
-import { isVariableListFile, VariableListOptions, VariableListScanner, VariableListSnapshot } from '../utils/variable-list';
+import {
+  isVariableListFile, VariableListOptions, VariableListScanner, VariableListSnapshot,
+  VariableListOccurrence, variableListSourceSummary, variableReferenceKindLabel,
+} from '../utils/variable-list';
 
 interface VariableListProviderOptions extends VariableListOptions {
   workspaceState: vscode.Memento;
@@ -11,6 +14,17 @@ interface VariableListProviderOptions extends VariableListOptions {
 }
 class VariableListItem extends vscode.TreeItem {
   children?: VariableListItem[];
+}
+
+function occurrenceEvidence(occurrence: VariableListOccurrence): string {
+  const location = `${vscode.workspace.asRelativePath(occurrence.file, true)}:${occurrence.line + 1}`;
+  const source = occurrence.source;
+  if (!source) return location;
+  const status = source.status ? { resolved: '值域完整', partial: '部分推导', unresolved: '未解出编号' }[source.status] : '';
+  const heading = `${location} · ${variableReferenceKindLabel(source.kind)}${status ? `（${status}）` : ''}`;
+  const reasons = (source.reasons || []).slice(0, 3).map(reason => `  原因：${reason}`);
+  const trace = (source.trace || []).slice(-8).map(step => `  第${step.line + 1}行：${step.description}`);
+  return [heading, `  表达式：${source.expression}`, ...reasons, ...trace].join('\n');
 }
 
 export class VariableListProvider implements vscode.TreeDataProvider<VariableListItem>, vscode.Disposable {
@@ -88,8 +102,14 @@ export class VariableListProvider implements vscode.TreeDataProvider<VariableLis
       const displayFiles = files.slice(0, 3).map(file => vscode.workspace.asRelativePath(file, true)).join(',');
       const item = new VariableListItem(name, vscode.TreeItemCollapsibleState.None);
       item.id = `variable:${name}`;
-      item.description = descriptions[name] || `${info.count}次 [${displayFiles}${files.length > 3 ? '...' : ''}]`;
-      item.tooltip = `${descriptions[name] ? descriptions[name] + '\n' : ''}${info.count}次 · ${files.length}个文件\n${files.join('\n')}\n点击跳转，再次点击循环`;
+      const sourceSummary = variableListSourceSummary(info);
+      const positions = snapshot.occurrences?.get(name) || [];
+      const evidence = positions.slice(0, 12).map(occurrenceEvidence);
+      item.description = descriptions[name] || `${info.count}处${info.possibleCount ? ' · 可能引用' : info.unknownCount ? ' · 未解动态' : info.inferredCount ? ' · 确定推导' : ''} [${displayFiles}${files.length > 3 ? '...' : ''}]`;
+      item.tooltip = [descriptions[name], `源码引用 ${info.count}处 · ${files.length}个文件`, sourceSummary,
+        '计数为源码引用位置，不是运行次数；多个可能编号来自同一表达式时分别展示。',
+        ...files, ...evidence, positions.length > evidence.length ? `另有${positions.length - evidence.length}处，可循环跳转查看。` : '',
+        '确定推导表示到达该语句时可知编号，不表示线上已经执行。', '点击跳转，再次点击循环'].filter(Boolean).join('\n');
       item.iconPath = new vscode.ThemeIcon(descriptions[name] ? 'bookmark' : 'symbol-variable');
       item.command = { command: 'boo.gotoVarOccurrence', title: '跳转', arguments: [name] };
       const children = groups.get(info.type) || [];

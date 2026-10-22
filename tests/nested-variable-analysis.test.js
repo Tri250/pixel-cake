@@ -151,7 +151,7 @@ function main() {
   ].join('\n'));
   assert.deepEqual(
     resultFor(numericFamily, 'S$数量<$str(N$序号)>').variables,
-    ['S$数量1', 'S$数量2'],
+    ['S$数量2'], // Source-order INC changes 1 to 2; the explicit family is not needed.
   );
 
   const emptyIndexWithFamily = analyzeNestedVariables([

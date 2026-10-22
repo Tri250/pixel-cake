@@ -42,9 +42,9 @@ function linkText(document, link) {
   return document.lineAt(link.range.start.line).text.slice(link.range.start.character, link.range.end.character);
 }
 function argsFor(link) { return JSON.parse(decodeURIComponent(link.target.toString().split('?')[1])); }
-function mapBytes(width) {
-  const data = Buffer.alloc(52 + width * 14);
-  data.writeUInt16LE(width, 0); data.writeUInt16LE(1, 2);
+function mapBytes(width, height = 1) {
+  const data = Buffer.alloc(52 + width * height * 14);
+  data.writeUInt16LE(width, 0); data.writeUInt16LE(height, 2);
   return data;
 }
 
@@ -58,6 +58,8 @@ async function main() {
     fs.mkdirSync(path.join(server, 'Mir200', 'Map'));
     fs.writeFileSync(path.join(server, 'Mir200', 'Map', '0.MAP'), mapBytes(width));
     fs.writeFileSync(path.join(server, 'Mir200', 'Map', 'ERSG.map'), mapBytes(width + 2));
+    fs.writeFileSync(path.join(server, 'Mir200', 'Map', 'SHABAK.map'), mapBytes(199 + width, 160));
+    fs.writeFileSync(path.join(server, 'Mir200', 'Map', 'PALACE.map'), mapBytes(79 + width, 80));
     fs.writeFileSync(path.join(server, 'Mir200', 'Envir', 'MapInfo.txt'), '[0 磁盘地图]\r\n[D001|ERSG 磁盘副本]');
   }
   const vscode = {
@@ -103,7 +105,7 @@ async function main() {
     return originalLoad.call(this, request, parent, isMain);
   };
   try {
-    const { parseMapInfoLine, parseMapInfoText } = require(path.join(runtime, 'out/utils/map-preview'));
+    const { parseMapInfoLine, parseMapInfoText, parseMapInfoConnectionLine } = require(path.join(runtime, 'out/utils/map-preview'));
     const { parseMonGenLine } = require(path.join(runtime, 'out/utils/map-entities'));
     const { MapInfoLinkProvider } = require(path.join(runtime, 'out/providers/map-info-link'));
     const { MonGenLinkProvider } = require(path.join(runtime, 'out/providers/mongen-link'));
@@ -139,6 +141,77 @@ async function main() {
       assert.equal(raw.slice(parsed.nameSpan.start, parsed.nameSpan.end), '长安副本');
       assert.deepEqual(parseMapInfoText(raw)[0], { ...parsed.entry, key: '1:D001', lineNumber: 1 });
       assert.equal(parseMapInfoLine('[0]', 1).nameSpan, undefined);
+    });
+    check('connection parser returns exact complete endpoint spans with BOM, indentation and comma spacing', () => {
+      const raw = '\uFEFF\t  沙巴克 150 , 122  ->  皇宫 11, 30 \t; 沙巴克 99,99 -> 皇宫 9,9';
+      const fromText = '沙巴克 150 , 122', toText = '皇宫 11, 30';
+      const parsed = parseMapInfoConnectionLine(raw, 19);
+      assert.deepEqual(parsed, {
+        lineNumber: 19,
+        from: { mapId: '沙巴克', x: 150, y: 122, span: { start: raw.indexOf(fromText), end: raw.indexOf(fromText) + fromText.length } },
+        to: { mapId: '皇宫', x: 11, y: 30, span: { start: raw.indexOf(toText), end: raw.indexOf(toText) + toText.length } },
+      });
+      assert.equal(raw.slice(parsed.from.span.start, parsed.from.span.end), fromText);
+      assert.equal(raw.slice(parsed.to.span.start, parsed.to.span.end), toText);
+      const zeros = parseMapInfoConnectionLine('$d001 0,00 -> ERSG 001,002 // trailing comment', 1);
+      assert.equal(zeros.from.mapId, '$d001');
+      assert.deepEqual([zeros.from.x, zeros.from.y, zeros.to.x, zeros.to.y], [0, 0, 1, 2]);
+      assert.equal(parseMapInfoConnectionLine(`0 ${Number.MAX_SAFE_INTEGER},0 -> 1 0,0`, 1).from.x, Number.MAX_SAFE_INTEGER);
+      for (const [line, from, to] of [
+        ['九曲黄河阵1 181 109 -> 九曲黄河阵3 154 65', '九曲黄河阵1 181 109', '九曲黄河阵3 154 65'],
+        ['  沙巴克 150,122 -> 皇宫\t11\t30 // comment', '沙巴克 150,122', '皇宫\t11\t30'],
+        ['\t沙巴克 150 122  ->  皇宫 11 , 30 ; comment', '沙巴克 150 122', '皇宫 11 , 30'],
+      ]) {
+        const connection = parseMapInfoConnectionLine(line, 5);
+        assert.equal(connection.lineNumber, 5);
+        assert.equal(line.slice(connection.from.span.start, connection.from.span.end), from);
+        assert.equal(line.slice(connection.to.span.start, connection.to.span.end), to);
+        assert.deepEqual([connection.from.x, connection.from.y], from.includes('181') ? [181, 109] : [150, 122]);
+        assert.deepEqual([connection.to.x, connection.to.y], to.includes('154') ? [154, 65] : [11, 30]);
+      }
+    });
+    const invalidConnections = [
+      '', ';沙巴克 150,122 -> 皇宫 11,30', ' // 沙巴克 150,122 -> 皇宫 11,30',
+      '沙巴克 -1,122 -> 皇宫 11,30', '沙巴克 1.5,122 -> 皇宫 11,30',
+      '沙巴克 1e2,122 -> 皇宫 11,30', '沙巴克 +1,122 -> 皇宫 11,30',
+      '沙巴克 150,122 -> 皇宫 11,-1', '沙巴克 150,122 -> 皇宫 11,30.5',
+      `沙巴克 ${Number.MAX_SAFE_INTEGER + 1},122 -> 皇宫 11,30`,
+      '沙巴克 150,122 => 皇宫 11,30',
+      '沙巴克 150,122 -> 皇宫', '沙巴克 150,122 -> 皇宫 11,30 extra',
+      '沙巴克 150 122 3 -> 皇宫 11 30', '沙巴克 150 122 -> 皇宫 11 30 4',
+      '沙巴克 150,122 -> 皇宫 11,30 -> 0 1,2',
+      '../沙巴克 150,122 -> 皇宫 11,30', '沙巴克 150,122 -> 目录\\皇宫 11,30',
+      '<$STR(S0)> 150,122 -> 皇宫 11,30', '沙巴克 150,122 -> D001|ERSG 11,30',
+      '[沙巴克 沙巴克] 150,122 -> 皇宫 11,30',
+    ];
+    check('connection parser refuses dynamic, unsafe, malformed, negative and non-integer endpoints', () => {
+      for (const raw of invalidConnections) assert.equal(parseMapInfoConnectionLine(raw, 1), undefined, raw);
+    });
+    check('connection links cover each full endpoint, retain header command arguments and have no hover side effects', () => {
+      const document = makeDocument(path.join(envirB, 'MapInfo.txt'), [
+        '[沙巴克|SHABAK 沙巴克]',
+        '\uFEFF\t沙巴克 150 , 122 -> 皇宫 11, 30 // not another link',
+        '0 0,0 -> $D001 1,2 ; comment',
+        '九曲黄河阵1 181 109 -> 九曲黄河阵3 154,65',
+        ...invalidConnections.filter(raw => !raw.startsWith('[')),
+      ].join('\r\n'));
+      const before = { panels: panels.length, warnings: warnings.length, opened: opened.length };
+      const links = mapLinks.provideDocumentLinks(document);
+      assert.deepEqual(links.map(link => linkText(document, link)), [
+        '沙巴克', '沙巴克 150 , 122', '皇宫 11, 30', '0 0,0', '$D001 1,2',
+        '九曲黄河阵1 181 109', '九曲黄河阵3 154,65',
+      ]);
+      assert.deepEqual(links.map(argsFor), [
+        [document.uri.toString(), 1],
+        [document.uri.toString(), 2, 'from'], [document.uri.toString(), 2, 'to'],
+        [document.uri.toString(), 3, 'from'], [document.uri.toString(), 3, 'to'],
+        [document.uri.toString(), 4, 'from'], [document.uri.toString(), 4, 'to'],
+      ]);
+      assert.ok(links.every(link => link.target.toString().startsWith('command:boo.openMapInfoOriginalMap?')));
+      assert.deepEqual({ panels: panels.length, warnings: warnings.length, opened: opened.length }, before);
+      for (const file of [path.join(envirB, 'other.txt'), path.join(envirB, 'QuestDiary', 'MapInfo.txt')]) {
+        assert.deepEqual(mapLinks.provideDocumentLinks(makeDocument(file, '沙巴克 150,122 -> 皇宫 11,30')), []);
+      }
     });
     const monDoc = makeDocument(path.join(envirB, 'MonGen.txt'), [
       '\uFEFF\tD001 152 97 练功师 0 1 1 ;练功师 outside',
@@ -309,6 +382,181 @@ async function main() {
       assert.equal(provider.currentMap, current);
       assert.equal(panels.length, panelCount);
       assert.ok(warnings.length >= 4);
+    });
+    const connectionProvider = new MapPreviewProvider({
+      extensionPath: runtime, extensionUri: TestUri.file(runtime),
+      globalStorageUri: TestUri.file(path.join(temporary, 'connection-storage')),
+      globalState: state, workspaceState: state, subscriptions: [],
+    });
+    connectionProvider.clientResourceLayout = () => undefined;
+    connectionProvider.resolveMiniMapImage = () => undefined;
+    connectionProvider.readMapEntities = root => {
+      entityRoots.push(root);
+      return { npcs: [], spawns: [], safeZones: [], resourceRoots: [], warnings: [] };
+    };
+    const connectionText = line => `[沙巴克|SHABAK 同名地点]\r\n[皇宫|PALACE 同名地点]\r\n${line}`;
+    let connectionPanel;
+    await checkAsync('first connection click opens original mode with a point, from current dirty MapInfo instead of disk', async () => {
+      dirtyA.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      await connectionProvider.revealMapInfoOriginalMap(dirtyA.uri.toString(), 3, 'from');
+      assert.equal(connectionProvider.currentMap.mapId, '沙巴克');
+      assert.equal(connectionProvider.currentMap.originalMapId, 'SHABAK');
+      assert.equal(connectionProvider.sourceWorkspaceRoot, serverA);
+      assert.equal(opened.length, 0, 'connection command must use already-open dirty text');
+      connectionPanel = panels.at(-1);
+      assert.notEqual(connectionPanel, panels[0]);
+      connectionPanel.receive({ type: 'ready' });
+      const data = connectionPanel.messages.find(message => message.type === 'mapData');
+      assert.equal(data.originalMap, true);
+      assert.deepEqual(data.revealPoint, { x: 150, y: 122 });
+      assert.deepEqual([data.map.width, data.map.height], [200, 160]);
+      assert.equal(entityRoots.at(-1), serverA);
+      await connectionProvider.loadOriginalMap({ requestId: 101 });
+      assert.equal(path.basename(connectionProvider.originalMapSession.filePath), 'SHABAK.map');
+    });
+    await checkAsync('right endpoint opens its own original map and carries its own coordinates', async () => {
+      await connectionProvider.revealMapInfoOriginalMap(dirtyA.uri.toString(), 3, 'to');
+      assert.equal(connectionProvider.currentMap.mapId, '皇宫');
+      assert.equal(connectionProvider.currentMap.originalMapId, 'PALACE');
+      const data = connectionPanel.messages.filter(message => message.type === 'mapData').at(-1);
+      assert.equal(data.originalMap, true);
+      assert.deepEqual(data.revealPoint, { x: 11, y: 30 });
+      await connectionProvider.loadOriginalMap({ requestId: 102 });
+      assert.equal(path.basename(connectionProvider.originalMapSession.filePath), 'PALACE.map');
+    });
+    await checkAsync('ready same-map endpoint clicks preserve loaded session, zero coordinates and every new point', async () => {
+      dirtyA.replace(connectionText('皇宫 0,0 -> 皇宫 79,79'));
+      const session = connectionProvider.originalMapSession;
+      const mapDataCount = connectionPanel.messages.filter(message => message.type === 'mapData').length;
+      for (const [side, point] of [['from', { x: 0, y: 0 }], ['to', { x: 79, y: 79 }], ['from', { x: 0, y: 0 }]]) {
+        await connectionProvider.revealMapInfoOriginalMap(dirtyA.uri.toString(), 3, side);
+        assert.deepEqual(connectionPanel.messages.at(-1), { type: 'revealOriginalMap', point });
+        assert.equal(connectionProvider.originalMapSession, session);
+        assert.equal(connectionPanel.messages.filter(message => message.type === 'mapData').length, mapDataCount);
+      }
+    });
+    await checkAsync('click command re-parses a dirty connection changed after link discovery', async () => {
+      dirtyA.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      const link = mapLinks.provideDocumentLinks(dirtyA).find(value => argsFor(value)[2] === 'from');
+      const argumentsAtDiscovery = argsFor(link);
+      dirtyA.replace(connectionText('皇宫 12 31 -> 沙巴克 151,123'));
+      await connectionProvider.revealMapInfoOriginalMap(...argumentsAtDiscovery);
+      assert.equal(connectionProvider.currentMap.mapId, '皇宫');
+      assert.deepEqual(connectionPanel.messages.at(-1), { type: 'revealOriginalMap', point: { x: 12, y: 31 } });
+    });
+    await checkAsync('same connection IDs in another server invalidate assets and locate only that server map', async () => {
+      dirtyA.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      await connectionProvider.revealMapInfoOriginalMap(dirtyA.uri.toString(), 3, 'from');
+      await connectionProvider.loadOriginalMap({ requestId: 103 });
+      const previous = connectionProvider.originalMapSession;
+      dirtyB.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      await connectionProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 3, 'from');
+      assert.equal(connectionProvider.originalMapSession, undefined);
+      assert.equal(connectionProvider.sourceWorkspaceRoot, serverB);
+      const data = connectionPanel.messages.filter(message => message.type === 'mapData').at(-1);
+      assert.equal(data.originalMap, true);
+      assert.deepEqual(data.revealPoint, { x: 150, y: 122 });
+      assert.equal(data.map.width, 201);
+      assert.equal(entityRoots.at(-1), serverB);
+      await connectionProvider.loadOriginalMap({ requestId: 104 });
+      assert.notEqual(connectionProvider.originalMapSession, previous);
+      assert.equal(connectionProvider.originalMapSession.model.width, 201);
+      assert.ok(connectionProvider.originalMapSession.filePath.startsWith(serverB));
+    });
+    await checkAsync('connection ID resolution normalizes case and dollars, prefers actual IDs and only then original IDs', async () => {
+      dirtyB.replace([
+        '[别的实例|ERSG 不能抢实际ID]',
+        '[$D001|SHABAK 正确副本]',
+        '[FAKE D001]',
+        '[$ERSG|PALACE 实际ID优先]',
+        '$d001 1,2 -> ersg 3,4',
+      ].join('\r\n'));
+      await connectionProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 5, 'from');
+      assert.equal(connectionProvider.currentMap.mapId, '$D001');
+      assert.equal(connectionProvider.currentMap.name, '正确副本');
+      await connectionProvider.loadOriginalMap({ requestId: 105 });
+      assert.equal(path.basename(connectionProvider.originalMapSession.filePath), 'SHABAK.map');
+      await connectionProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 5, 'to');
+      assert.equal(connectionProvider.currentMap.mapId, '$ERSG');
+      assert.equal(connectionProvider.currentMap.originalMapId, 'PALACE');
+      assert.deepEqual(connectionPanel.messages.filter(message => message.type === 'mapData').at(-1).revealPoint, { x: 3, y: 4 });
+      dirtyB.replace('[D001|SHABAK 原图回退]\r\nshabak 1,2 -> SHABAK 3,4');
+      await connectionProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 2, 'from');
+      assert.equal(connectionProvider.currentMap.mapId, 'D001');
+      assert.equal(connectionProvider.currentMap.originalMapId, 'SHABAK');
+    });
+    await checkAsync('stale connection, invalid side, undefined IDs, display-name guesses and out-of-bounds points leave valid view intact', async () => {
+      dirtyB.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      await connectionProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 3, 'from');
+      await connectionProvider.loadOriginalMap({ requestId: 106 });
+      const current = connectionProvider.currentMap;
+      const session = connectionProvider.originalMapSession;
+      const root = connectionProvider.sourceWorkspaceRoot;
+      const panelCount = panels.length;
+      const messages = connectionPanel.messages.length;
+      const assertRejected = async (text, line, side, source = dirtyB) => {
+        source.replace(text);
+        const warningCount = warnings.length;
+        await connectionProvider.revealMapInfoOriginalMap(source.uri.toString(), line, side);
+        assert.equal(connectionProvider.currentMap, current, `${String(side)} / ${text}`);
+        assert.equal(connectionProvider.originalMapSession, session);
+        assert.equal(connectionProvider.sourceWorkspaceRoot, root);
+        assert.equal(panels.length, panelCount);
+        assert.equal(connectionPanel.messages.length, messages, 'invalid commands must not send map/reveal data');
+        assert.ok(warnings.length > warningCount, 'invalid explicit clicks should explain rejection');
+      };
+      for (const side of ['', 'FROM', 'left', 0, null, {}]) {
+        await assertRejected(connectionText('沙巴克 150,122 -> 皇宫 11,30'), 3, side);
+      }
+      await assertRejected(connectionText(';沙巴克 150,122 -> 皇宫 11,30'), 3, 'from');
+      await assertRejected(connectionText('沙巴克 150,122 -> 皇宫 11,30'), 0, 'from');
+      await assertRejected(connectionText('沙巴克 150,122 -> 皇宫 11,30'), 4, 'from');
+      await assertRejected(connectionText('不存在 1,2 -> 皇宫 11,30'), 3, 'from');
+      await assertRejected(connectionText('同名地点 1,2 -> 皇宫 11,30'), 3, 'from');
+      await assertRejected(connectionText('沙巴克 201,122 -> 皇宫 11,30'), 3, 'from');
+      await assertRejected(connectionText('沙巴克 150,160 -> 皇宫 11,30'), 3, 'from');
+      await assertRejected(connectionText('沙巴克 150,122 -> 皇宫 81,0'), 3, 'to');
+      await assertRejected(connectionText('沙巴克 150,122 -> 皇宫 11,30'), 1, 'from');
+      await assertRejected(connectionText('不存在 1,2 -> 不存在 3,4'), 3, 'from', dirtyA);
+    });
+    await checkAsync('declared connection with a missing original MAP does not change a valid view or server binding', async () => {
+      const current = connectionProvider.currentMap;
+      const session = connectionProvider.originalMapSession;
+      const root = connectionProvider.sourceWorkspaceRoot;
+      const panelCount = panels.length, messageCount = connectionPanel.messages.length, warningCount = warnings.length;
+      dirtyA.replace('[已声明|MISSING_CONNECTION_MAP 不存在的原图]\r\n已声明 1,2 -> 已声明 3,4');
+      await connectionProvider.revealMapInfoOriginalMap(dirtyA.uri.toString(), 2, 'from');
+      assert.equal(connectionProvider.currentMap, current);
+      assert.equal(connectionProvider.originalMapSession, session);
+      assert.equal(connectionProvider.sourceWorkspaceRoot, root);
+      assert.equal(panels.length, panelCount);
+      assert.equal(connectionPanel.messages.length, messageCount);
+      assert.ok(warnings.length > warningCount);
+      assert.match(warnings.at(-1), /原始.*地图|地图.*文件|MAP/i);
+    });
+    await checkAsync('manual sidebar map selection cancels a pending connection reveal before webview readiness', async () => {
+      dirtyB.replace(connectionText('沙巴克 150,122 -> 皇宫 11,30'));
+      const pendingProvider = new MapPreviewProvider({
+        extensionPath: runtime, extensionUri: TestUri.file(runtime),
+        globalStorageUri: TestUri.file(path.join(temporary, 'pending-storage')),
+        globalState: state, workspaceState: state, subscriptions: [],
+      });
+      pendingProvider.clientResourceLayout = () => undefined;
+      pendingProvider.resolveMiniMapImage = () => undefined;
+      pendingProvider.readMapEntities = () => ({ npcs: [], spawns: [], safeZones: [], resourceRoots: [], warnings: [] });
+      await pendingProvider.revealMapInfoOriginalMap(dirtyB.uri.toString(), 3, 'from');
+      const panel = panels.at(-1);
+      assert.equal(pendingProvider.panelReady, false);
+      assert.equal(panel.messages.filter(message => message.type === 'mapData').length, 0);
+      const sourceMap = pendingProvider.maps.find(map => map.mapId === '沙巴克');
+      const otherMap = pendingProvider.maps.find(map => map.mapId === '皇宫');
+      await pendingProvider.handleSidebarMessage({ type: 'openMap', key: otherMap.key });
+      await pendingProvider.handleSidebarMessage({ type: 'openMap', key: sourceMap.key });
+      panel.receive({ type: 'ready' });
+      const data = panel.messages.find(message => message.type === 'mapData');
+      assert.equal(data.map.mapId, '沙巴克');
+      assert.equal(data.originalMap, false, 'manual selection must not reactivate the old connection intent');
+      assert.equal(data.revealPoint, undefined, 'late readiness must not replay cancelled coordinates');
     });
     console.log(`map-config-links.test.js: PASS (${cases} behavior cases)`);
   } finally {

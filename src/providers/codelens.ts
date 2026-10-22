@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import { findScriptLabelReferencesInText, normalizeScriptLabelKey } from '../utils/script-labels';
+import { normalizeEngineId } from '../utils/engine-registry';
 
 const DOC_SELECTOR: vscode.DocumentSelector = [
   { language: 'gomscript', scheme: 'file' },
@@ -12,7 +13,8 @@ export function registerCodeLensProvider(context: vscode.ExtensionContext): void
       const lenses: vscode.CodeLens[] = [];
       const allText = document.getText();
       const referenceCounts = new Map<string, number>();
-      for (const reference of findScriptLabelReferencesInText(allText)) {
+      const engine = normalizeEngineId(vscode.workspace.getConfiguration('boo', document.uri).get<string>('engine', 'GOM'));
+      for (const reference of findScriptLabelReferencesInText(allText, engine)) {
         const key = normalizeScriptLabelKey(reference.name);
         referenceCounts.set(key, (referenceCounts.get(key) || 0) + 1);
       }

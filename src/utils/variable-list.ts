@@ -4,11 +4,11 @@ import { ScriptTextSpan } from './command-arguments';
 import { isOffsetInTextRanges } from './map-code-context';
 import {
   analyzeNestedVariables, isNestedVariableBaseOffset, NestedVariableAnalysisOptions,
-  normalizeNestedVariableReference, normalizePersonalFlagReference,
+  NestedVariableResolutionStatus, normalizeNestedVariableReference, normalizePersonalFlagReference,
 } from './nested-variable-analysis';
 import { isScriptCommentLine } from './script-labels';
 import { decodeTextFile } from './text';
-import { compactVariableTypeLabel, findScriptVariables, normalizeScriptVariableName, recordVariableUsage } from './variable-statistics';
+import { compactVariableTypeLabel, findScriptVariables, findSemanticScriptVariables, normalizeScriptVariableName, recordVariableUsage } from './variable-statistics';
 import { CandidateUsage, collectCandidateUsage, createCandidateUsage, mergeCandidateUsage, personalFlagRangeForEngine } from './variable-candidates';
 import { EngineId } from '../types';
 
@@ -49,8 +49,25 @@ export function variableListScanRoots(workspaceRoots: readonly string[]): string
   return unique.filter(root => !unique.some(other => other !== root && inside(root, other)));
 }
 
-export interface VariableListOccurrence { file: string; line: number }
-export interface VariableListUsage { type: string; count: number; files: Set<string> }
+export type VariableReferenceKind = 'direct' | 'inferred' | 'possible' | 'unknown';
+export interface VariableReferenceSource {
+  kind: VariableReferenceKind;
+  expression: string;
+  status?: NestedVariableResolutionStatus;
+  /** Source spans identify one expression even when it expands to several possible slots. */
+  start?: number;
+  end?: number;
+  reasons?: string[];
+  trace?: { line: number; description: string }[];
+}
+export interface VariableListSourceCounts {
+  directCount?: number;
+  inferredCount?: number;
+  possibleCount?: number;
+  unknownCount?: number;
+}
+export interface VariableListOccurrence { file: string; line: number; source?: VariableReferenceSource }
+export interface VariableListUsage extends VariableListSourceCounts { type: string; count: number; files: Set<string> }
 export interface VariableListSnapshot {
   usages: Map<string, VariableListUsage>;
   occurrences: Map<string, VariableListOccurrence[]>;
@@ -64,8 +81,30 @@ export interface VariableListOptions {
   nestedOptions?: (file: string) => NestedVariableAnalysisOptions;
   mapRanges?: (text: string, file: string) => readonly ScriptTextSpan[];
 }
-interface FileVariable { name: string; type: string; line: number }
+export interface FileVariable { name: string; type: string; line: number; source?: VariableReferenceSource }
 interface CachedFile { stamp: string; text?: string; variables: FileVariable[]; external: boolean; candidates: CandidateUsage }
+
+/** Counts source references, not executions. One possible slot receives one count per source expression. */
+export function recordVariableListUsage<T extends VariableListSourceCounts & { count: number; files: Set<string> }>(
+  usages: Map<string, T>, name: string, file: string, create: (normalizedName: string) => T,
+  source?: VariableReferenceSource,
+): { name: string; usage: T } {
+  const result = recordVariableUsage(usages, name, file, create);
+  const kind = source?.kind || 'direct';
+  const field = kind === 'direct' ? 'directCount' : kind === 'inferred' ? 'inferredCount' : kind === 'possible' ? 'possibleCount' : 'unknownCount';
+  result.usage[field] = (result.usage[field] || 0) + 1;
+  return result;
+}
+
+export function variableReferenceKindLabel(kind: VariableReferenceKind): string {
+  return { direct: '直接引用', inferred: '确定推导', possible: '可能引用', unknown: '未解动态' }[kind];
+}
+
+export function variableListSourceSummary(info: VariableListSourceCounts): string {
+  return ([['direct', info.directCount], ['inferred', info.inferredCount], ['possible', info.possibleCount], ['unknown', info.unknownCount]] as const)
+    .filter(([, count]) => !!count)
+    .map(([kind, count]) => `${variableReferenceKindLabel(kind)} ${count}处`).join(' · ');
+}
 
 export function analyzeVariableListFile(text: string, file: string, options: VariableListOptions): Pick<CachedFile, 'variables' | 'external' | 'candidates'> {
   const variables: FileVariable[] = [];
@@ -75,34 +114,60 @@ export function analyzeVariableListFile(text: string, file: string, options: Var
   const flagRange = personalFlagRangeForEngine(engine);
   const nested = analyzeNestedVariables(text, {
     ...nestedOptions,
+    engine,
     personalFlagRange: flagRange,
     resolveConfigValues: request => { external = true; return nestedOptions.resolveConfigValues?.(request); },
     resolveTableData: request => { external = true; return nestedOptions.resolveTableData?.(request); },
     resolveListData: request => { external = true; return nestedOptions.resolveListData?.(request); },
   });
-  const add = (name: string, line: number, type = compactVariableTypeLabel(name)) => {
-    variables.push({ name: normalizeScriptVariableName(name), type, line });
+  const add = (name: string, line: number, type = compactVariableTypeLabel(name), source?: VariableReferenceSource) => {
+    variables.push({ name: normalizeScriptVariableName(name), type, line, source });
   };
   for (const reference of nested.references) {
-    for (const name of reference.variables) add(name, reference.line);
+    const kind: VariableReferenceKind = reference.status === 'resolved' && reference.variables.length === 1 ? 'inferred' : 'possible';
+    const reasons = [...(reference.reasons || [])];
+    if (reference.variables.length > 1) reasons.push(`同一表达式有${reference.variables.length}个可能编号；不是执行次数`);
+    if (reference.status !== 'resolved' && !reasons.length) reasons.push('动态编号未完全确定，已知编号仅为可能引用');
+    const source: VariableReferenceSource = { kind, expression: reference.raw, status: reference.status,
+      start: reference.start, end: reference.end, reasons, trace: reference.trace };
+    for (const name of reference.variables) add(name, reference.line, undefined, source);
     if (reference.status !== 'resolved') add(normalizeNestedVariableReference(reference), reference.line,
-      reference.status === 'partial' ? '嵌套变量（部分推导）' : '嵌套变量（运行时确定）');
+      reference.status === 'partial' ? '嵌套变量（部分推导）' : '嵌套变量（未解动态）',
+      { ...source, kind: 'unknown', reasons: reasons.length ? reasons : ['无法静态确定动态编号'] });
   }
   for (const reference of nested.personalFlags) {
-    for (const flag of reference.flags) add(flag, reference.line, `个人标识 [${flagRange.min}-${flagRange.max}]`);
+    const staticReference = /^[\d,\-\s]+$/.test(reference.content) && /^\d+$/.test(reference.countExpression || '1');
+    const kind: VariableReferenceKind = staticReference && reference.status === 'resolved' ? 'direct'
+      : reference.status === 'resolved' && reference.flags.length === 1 ? 'inferred' : 'possible';
+    const reasons = [...(reference.reasons || [])];
+    if (!staticReference && reference.flags.length > 1) reasons.push(`同一表达式有${reference.flags.length}个可能标志；不是执行次数`);
+    if (reference.status !== 'resolved' && !reasons.length) reasons.push('标志编号未完全确定，或超出当前引擎范围');
+    const source: VariableReferenceSource = { kind, expression: normalizePersonalFlagReference(reference), status: reference.status,
+      start: reference.start, end: reference.end, reasons, trace: reference.trace };
+    for (const flag of reference.flags) add(flag, reference.line, `个人标识 [${flagRange.min}-${flagRange.max}]`, source);
     if (reference.status !== 'resolved') add(normalizePersonalFlagReference(reference), reference.line,
-      reference.status === 'partial' ? '个人标识（部分推导）' : '个人标识（未确定或越界）');
+      reference.status === 'partial' ? '个人标识（部分推导）' : '个人标识（未确定或越界）', { ...source, kind: 'unknown' });
   }
   const ranges = options.mapRanges?.(text, file) || [];
   let offset = 0;
+  let activeBlock: string | undefined;
   const lines = text.split(/\r\n|\n|\r/);
   for (let line = 0; line < lines.length; line++) {
     const content = lines[line];
     if (!isScriptCommentLine(content)) {
+      if (/^\s*\[@[^\]]+\]/.test(content)) activeBlock = undefined;
+      const directive = /^\s*#(IF|ACT|SAY|ELSEACT|ELSESAY|OR|AND)\b/i.exec(content);
+      if (directive) activeBlock = directive[1].toUpperCase();
+      const semantic = findSemanticScriptVariables(content, engine, !activeBlock || activeBlock === 'ACT' || activeBlock === 'ELSEACT');
+      for (const reference of semantic.references) add(reference.name, line, undefined, {
+        kind: 'direct', expression: reference.expression, start: offset + reference.index, end: offset + reference.end,
+        reasons: reference.reason ? [reference.reason] : undefined,
+      });
       for (const match of findScriptVariables(content)) {
         const absolute = offset + match.index;
-        if (isNestedVariableBaseOffset(absolute, nested.references) || isOffsetInTextRanges(absolute, ranges)) continue;
-        add(match.name, line);
+        if (isNestedVariableBaseOffset(absolute, nested.references) || isOffsetInTextRanges(absolute, ranges) ||
+          isOffsetInTextRanges(match.index, semantic.excludedRanges)) continue;
+        add(match.name, line, undefined, { kind: 'direct', expression: match.name, start: absolute });
       }
     }
     offset += content.length;
@@ -172,9 +237,9 @@ export class VariableListScanner {
         scannedFiles++;
         mergeCandidateUsage(candidates, cached.candidates);
         for (const variable of cached.variables) {
-          recordVariableUsage(usages, variable.name, file, () => ({ type: variable.type, count: 0, files: new Set() }));
+          recordVariableListUsage(usages, variable.name, file, () => ({ type: variable.type, count: 0, files: new Set() }), variable.source);
           const positions = occurrences.get(variable.name) || [];
-          positions.push({ file, line: variable.line });
+          positions.push({ file, line: variable.line, source: variable.source });
           occurrences.set(variable.name, positions);
         }
       } catch (error) {

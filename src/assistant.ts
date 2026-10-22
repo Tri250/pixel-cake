@@ -44,10 +44,12 @@ import {
 import { findHostScriptLabelKeys } from './utils/script-call-context';
 import {
   normalizeScriptVariableName,
-  recordVariableUsage,
 } from './utils/variable-statistics';
 import { VariableListProvider, registerVariableListRefresh } from './providers/variable-list';
-import { analyzeVariableListFile, VariableListScanner } from './utils/variable-list';
+import {
+  analyzeVariableListFile, recordVariableListUsage, VariableListScanner,
+  VariableReferenceSource, VariableListSourceCounts, variableListSourceSummary,
+} from './utils/variable-list';
 import {
   NestedConfigValueRequest,
   NestedConfigValueResult,
@@ -56,7 +58,7 @@ import {
   NestedTableDataRequest,
   NestedTableDataResult,
 } from './utils/nested-variable-analysis';
-import { isBinarySpreadsheet, parseScriptTableData } from './utils/table-data';
+import { MAX_STATISTICS_TABLE_BYTES, readStatisticsTableData } from './utils/statistics-table-data';
 import {
   CommandEntry,
   CommandsData,
@@ -551,12 +553,12 @@ export function activateAssistant(context: vscode.ExtensionContext) {
     const pick = await vscode.window.showQuickPick(
       values.map(value => ({
         label: args.kind === 'variable' && family ? `${family}${value}` : `[${value}]`,
-        description: uncertain ? '待核实：存在动态引用' : '当前扫描未发现使用',
+        description: uncertain ? '待核实：动态引用或分析不完整' : '当前扫描范围内未发现引用',
         value,
       })),
       {
         title: (args.kind === 'variable' && family ? `选择 ${family} 类变量候选` : '选择个人标识候选') + (uncertain ? '（动态引用待核实）' : ''),
-        placeHolder: uncertain ? '有无法确定的动态编号；这些候选不能保证未使用，请核对后选择' : '当前工作区扫描结果，可输入编号筛选',
+        placeHolder: uncertain ? '有无法确定的动态编号；这些候选不能保证未使用，请核对后选择' : '基于当前脚本范围及打开文件草稿；未发现引用不等于运行时未使用',
         matchOnDescription: true,
       }
     );
@@ -1348,7 +1350,9 @@ export function activateAssistant(context: vscode.ExtensionContext) {
           return findScriptCommandCallbackTarget(document, commandCallback, cancellationToken);
         }
 
-        const scriptLabelReferences = findScriptLabelReferences(line);
+        const scriptLabelReferences = findScriptLabelReferences(
+          line, callbackEngine, !callbackContext.inSay && !callbackContext.inCondition
+        );
         let match: RegExpExecArray | null;
 
         // 1. 查找 <text/@label>、/@@InputStringXX 等界面引用 (同文件)
@@ -1396,16 +1400,12 @@ export function activateAssistant(context: vscode.ExtensionContext) {
           }
         }
 
-        // 2. 查找 GOTO @label (同文件)
+        // 2. GOTO 与有文档依据的延时命令标签 (同文件，不扫描任意 @ 文本)
         for (const reference of scriptLabelReferences.filter(item => item.kind === 'goto')) {
-          if (charPos >= reference.markerStart && charPos <= reference.end) {
-            const label = reference.name;
-            const allText = document.getText();
-            const labelRegex = new RegExp(`\\[@${escapeRegex(label)}\\]`, 'g');
-            const lm = labelRegex.exec(allText);
-            if (lm) {
-              const pos = document.positionAt(lm.index);
-              return new vscode.Location(document.uri, pos);
+          if (charPos >= reference.markerStart && charPos < reference.end) {
+            const target = findScriptLabelPosition(document.getText(), reference.name);
+            if (target) {
+              return new vscode.Location(document.uri, new vscode.Position(target.line, target.character));
             }
           }
         }
@@ -1608,7 +1608,9 @@ export function activateAssistant(context: vscode.ExtensionContext) {
           // 标签引用：搜索 /@label、@label、GOTO @label
           const escaped = escapeRegex(label);
           const labelKey = normalizeScriptLabelKey(label);
-          for (const reference of findScriptLabelReferencesInText(allText)) {
+          const referenceEngine = normalizeEngineId(vscode.workspace.getConfiguration('boo', document.uri)
+            .get<string>('engine', languageIndex.engine));
+          for (const reference of findScriptLabelReferencesInText(allText, referenceEngine)) {
             if (normalizeScriptLabelKey(reference.name) === labelKey) {
               refs.push(new vscode.Location(document.uri, document.positionAt(reference.markerStart)));
             }
@@ -1869,7 +1871,8 @@ export function activateAssistant(context: vscode.ExtensionContext) {
       ? findHostScriptLabelKeys(workspaceRoot, docUri.fsPath)
       : new Set<string>();
     for (const reference of findUndefinedScriptLabelReferences(lines, definedLabels, {
-      engine: languageIndex.engine,
+      engine: docUri ? normalizeEngineId(vscode.workspace.getConfiguration('boo', docUri)
+        .get<string>('engine', languageIndex.engine)) : languageIndex.engine,
       additionalDefinedLabelKeys: hostLabelKeys,
       skipSectionedDataDocuments: true,
       isAdditionalDefinedLabel: isCurrentEngineDefaultScriptLabel,
@@ -2193,8 +2196,8 @@ export function activateAssistant(context: vscode.ExtensionContext) {
   function reportVariableCategory(name: string): string | undefined {
     const numeric = /^([PDMNSIGAUTJZ])\d+$/i.exec(name);
     if (numeric) return numeric[1].toUpperCase() + '类变量';
-    if (/^GL\$/i.test(name)) return 'GL$ 全局列表';
-    const custom = /^([NSLD])\$/i.exec(name);
+    if (/^GL\$[A-Za-z0-9_\u3400-\u9fff]+$/i.test(name)) return 'GL$ 全局列表';
+    const custom = /^([NSLD])\$[A-Za-z0-9_\u3400-\u9fff]+$/i.exec(name);
     if (custom) return custom[1].toUpperCase() + '$ 自定义变量';
     return undefined;
   }
@@ -2277,13 +2280,10 @@ export function activateAssistant(context: vscode.ExtensionContext) {
 
     let result: NestedTableDataResult | undefined;
     try {
-      const raw = fs.readFileSync(tablePath);
-      if (!isBinarySpreadsheet(raw)) {
-        result = {
-          rows: parseScriptTableData(decodeTextFile(raw).text, request.format),
-          complete: true,
-        };
-      }
+      if (stat.size <= MAX_STATISTICS_TABLE_BYTES) {
+        result = readStatisticsTableData(fs.readFileSync(tablePath), request.format,
+          reason => log(`变量统计表格读取未完成：${tablePath}；${reason}`));
+      } else log(`变量统计表格读取未完成：${tablePath}；超过 16 MiB 读取上限`);
     } catch {
       result = undefined;
     }
@@ -2389,16 +2389,16 @@ export function activateAssistant(context: vscode.ExtensionContext) {
       const flagCategory = `个人标识 [${flagRange.min}-${flagRange.max}]`;
 
       // 按类别聚合: 类别名 -> { 变量名 -> { count: 使用次数, files: Set<文件路径> } }
-      type VarInfo = { count: number; files: Set<string> };
+      type VarInfo = VariableListSourceCounts & { count: number; files: Set<string> };
       const categories: Map<string, Map<string, VarInfo>> = new Map();
 
-      function addVar(cat: string, name: string, filePath: string) {
+      function addVar(cat: string, name: string, filePath: string, source?: VariableReferenceSource) {
         if (!categories.has(cat)) categories.set(cat, new Map());
         const catMap = categories.get(cat)!;
-        recordVariableUsage(catMap, name, filePath, () => ({
+        recordVariableListUsage(catMap, name, filePath, () => ({
           count: 0,
           files: new Set<string>(),
-        }));
+        }), source);
       }
 
       for (const file of files) {
@@ -2419,7 +2419,7 @@ export function activateAssistant(context: vscode.ExtensionContext) {
             mapRanges: (content, sourceFile) => findMapCodeRangesInText(content, sourceFile, configuredMapCodesForFile(sourceFile), resolveIndexedCommandToken),
           });
           for (const variable of analysis.variables) {
-            addVar(reportVariableCategory(variable.name) || variable.type, variable.name, file.fsPath);
+            addVar(reportVariableCategory(variable.name) || variable.type, variable.name, file.fsPath, variable.source);
           }
 
         } catch (e) {
@@ -2453,7 +2453,8 @@ tr:hover{background:#2a2a2a}
 </head>
 <body>
 <h1>BOO 变量统计报告</h1>
-<div class="summary">扫描文件: ${done} 个 &nbsp;|&nbsp; 读取失败: ${failed} 个${failed ? '（统计不完整）' : ''} &nbsp;|&nbsp; 变量种类: <span id="totalTypes">-</span></div>`;
+<div class="summary">扫描文件: ${done} 个 &nbsp;|&nbsp; 读取失败: ${failed} 个${failed ? '（统计不完整）' : ''} &nbsp;|&nbsp; 变量种类: <span id="totalTypes">-</span></div>
+<div class="summary">引擎: ${escapeHtml(engine)} · 范围: 当前工作区 TXT · 内容: 打开文件取当前草稿，其余读取磁盘。计数为源码引用处数，不是运行次数；确定推导不表示线上已执行。</div>`;
 
       const catOrder = [
         'A类变量', 'G类变量', 'U类变量', 'T类变量',
@@ -2461,8 +2462,9 @@ tr:hover{background:#2a2a2a}
         'P类变量', 'D类变量', 'M类变量', 'N类变量', 'S类变量', 'I类变量',
         'N$ 自定义变量', 'S$ 自定义变量', 'D$ 自定义变量', 'L$ 自定义变量',
         'GL$ 全局列表', flagCategory,
+        'HUMAN命名变量', 'GUILD命名变量',
         '个人标识（部分推导）', '个人标识（未确定或越界）',
-        '嵌套变量（部分推导）', '嵌套变量（运行时确定）'
+        '嵌套变量（部分推导）', '嵌套变量（未解动态）'
       ];
 
       let totalTypes = 0;
@@ -2485,10 +2487,10 @@ tr:hover{background:#2a2a2a}
         });
 
         html += `<h2>${escapeHtml(cat)} (${entries.length} 个)</h2>`;
-        html += '<table><tr><th>变量名</th><th>使用次数</th><th>涉及文件</th></tr>';
+        html += '<table><tr><th>变量名</th><th>源码引用处数</th><th>来源分类</th><th>涉及文件</th></tr>';
         for (const [name, info] of entries) {
           const fileList = [...info.files].map(f => vscode.workspace.asRelativePath(f, true)).join(', ');
-          html += `<tr><td class="col-name">${escapeHtml(name)}</td><td class="col-count">${info.count}</td><td class="col-files">${escapeHtml(fileList)}</td></tr>`;
+          html += `<tr><td class="col-name">${escapeHtml(name)}</td><td class="col-count">${info.count}</td><td>${escapeHtml(variableListSourceSummary(info))}</td><td class="col-files">${escapeHtml(fileList)}</td></tr>`;
         }
         html += '</table>';
       }
@@ -2497,7 +2499,7 @@ tr:hover{background:#2a2a2a}
         html += '<p class="no-data">未发现变量引用</p>';
       }
 
-      html += `<script>document.getElementById('totalTypes').textContent='${totalTypes}'</script>`;
+      html = html.replace('<span id="totalTypes">-</span>', `<span id="totalTypes">${totalTypes}</span>`);
       html += '</body></html>';
 
       const panel = vscode.window.createWebviewPanel(
@@ -3578,9 +3580,11 @@ el.textContent=e.data.text||'扫描完成';
       for (let i = 0; i < lines.length; i++) {
         const m = lines[i].match(/\[@([^\]]+)\]/g);
         if (m) for (const lb of m) { const n = lb.substring(2, lb.length - 1).toUpperCase(); defined.set(n, i); }
-        for (const reference of findScriptLabelReferences(lines[i])) {
-          refs.add(normalizeScriptLabelKey(reference.name));
-        }
+      }
+      const referenceEngine = normalizeEngineId(vscode.workspace.getConfiguration('boo', editor.document.uri)
+        .get<string>('engine', languageIndex.engine));
+      for (const reference of findScriptLabelReferencesInText(editor.document.getText(), referenceEngine)) {
+        refs.add(normalizeScriptLabelKey(reference.name));
       }
 
       const unused: { name: string; line: number }[] = [];
@@ -3598,7 +3602,7 @@ el.textContent=e.data.text||'扫描完成';
       const items = unused.map(u => ({
         label: `[@${u.name}]`,
         description: `第${u.line + 1}行`,
-        detail: '未被任何/@或GOTO引用'
+        detail: '未被任何界面或脚本跳转引用'
       }));
       vscode.window.showQuickPick(items, {
         placeHolder: `发现 ${unused.length} 个未使用的标签`,
@@ -3775,6 +3779,7 @@ el.textContent=e.data.text||'扫描完成';
       let databaseRequestVersion = 0;
       let databaseMutationPending = false;
       let databasePanelDisposed = false;
+      let selectedDatabaseFile: string | undefined;
       panel.onDidDispose(() => {
         databasePanelDisposed = true;
         databaseRequestVersion++;
@@ -3791,6 +3796,29 @@ el.textContent=e.data.text||'扫描完成';
       panel.webview.html = databaseViewerWebviewHtml(context, panel.webview);
 
       panel.webview.onDidReceiveMessage(async msg => {
+        if (msg.type === 'selectDatabaseFile') {
+          if (databaseMutationPending) return;
+          const selected = await vscode.window.showOpenDialog({
+            canSelectMany: false, canSelectFiles: true, canSelectFolders: false,
+            title: '选择 SQLite 或 Access 数据库', filters: { '数据库': ['db', 'mdb'] },
+          });
+          if (!selected?.[0] || databasePanelDisposed || databaseMutationPending) return;
+          if (!/\.(?:db|mdb)$/i.test(selected[0].fsPath)) return;
+          databaseRequestVersion++;
+          databaseSession?.dispose();
+          databaseSession = undefined;
+          selectedDatabaseFile = selected[0].fsPath;
+          postToSidebar({ type: 'clearDatabaseDetail', detailKind: 'other' });
+          // Reuse the same ready branch; the selected path comes only from the native picker.
+          msg = { type: 'ready' };
+        }
+        if (msg.type === 'reloadDatabaseSource') {
+          if (databaseMutationPending) return;
+          databaseRequestVersion++;
+          databaseSession?.dispose();
+          databaseSession = undefined;
+          msg = { type: 'ready' };
+        }
         if (msg.type === 'clearDatabaseDetail') {
           postToSidebar({
             type: 'clearDatabaseDetail',
@@ -3804,6 +3832,13 @@ el.textContent=e.data.text||'扫描完成';
           const columnLabels = msg.columnLabels || {};
           const columnDescriptions = msg.columnDescriptions || {};
           const detailKind = classifyDatabaseDetail(msg.tableName, msg.tableLabel);
+          // A manually chosen database is not bound to the workspace's ancillary files.
+          // Keep its typed fields, but never read or offer to edit another server's files.
+          if (selectedDatabaseFile || !vscode.workspace.workspaceFolders?.[0]) {
+            postToSidebar({ type: 'showDatabaseDetail', detailKind, name: itemName,
+              fields, columnLabels, columnDescriptions, fieldsOnly: true });
+            return;
+          }
           const wsRoot2 = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
           if (wsRoot2) {
             const engineRoot2 = resolveEngineRoot(wsRoot2);
@@ -3908,19 +3943,19 @@ el.textContent=e.data.text||'扫描完成';
         if (msg.type === 'ready') {
           try {
             const wsFolders = vscode.workspace.workspaceFolders;
-            if (!wsFolders || wsFolders.length === 0) {
+            if ((!wsFolders || wsFolders.length === 0) && !selectedDatabaseFile) {
               panel.webview.postMessage({ type: 'databaseCatalog', tables: [], dbType: '未打开工作区', totalCount: 0 });
               return;
             }
-            const wsRoot = wsFolders[0].uri.fsPath;
+            const wsRoot = wsFolders?.[0]?.uri.fsPath || path.dirname(selectedDatabaseFile!);
             const engineRoot = resolveEngineRoot(wsRoot);
-            const databaseProfile = activeEngine.id === '996PC' ? '996pc' : 'legacy';
-            const dbDir = databaseProfile === '996pc'
+            const databaseProfile = !selectedDatabaseFile && activeEngine.id === '996PC' ? '996pc' : 'legacy';
+            const dbDir = selectedDatabaseFile || (databaseProfile === '996pc'
               ? path.join(engineRoot, 'Mir200', 'Envir', 'Data')
-              : path.join(engineRoot, 'MUD2', 'db');
-            databaseSession ||= new DatabaseBrowserSession(dbDir, databaseProfile);
-            const catalog = await databaseSession.initialize();
-            if (!databasePanelDisposed) panel.webview.postMessage({ type: 'databaseCatalog', ...catalog });
+              : path.join(engineRoot, 'MUD2', 'db'));
+            const initializingSession = databaseSession ||= new DatabaseBrowserSession(dbDir, databaseProfile);
+            const catalog = await initializingSession.initialize();
+            if (!databasePanelDisposed && databaseSession === initializingSession) panel.webview.postMessage({ type: 'databaseCatalog', ...catalog });
           } catch (e: unknown) {
             panel.webview.postMessage({ type: 'databaseError', error: e instanceof Error ? e.message : String(e) });
           }

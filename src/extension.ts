@@ -261,7 +261,7 @@ export function activate(context: vscode.ExtensionContext) {
     ),
     vscode.commands.registerCommand(
       'boo.openMapInfoOriginalMap',
-      (sourceUri: unknown, lineNumber: unknown) => mapPreviewProvider.revealMapInfoOriginalMap(sourceUri, lineNumber)
+      (sourceUri: unknown, lineNumber: unknown, side: unknown) => mapPreviewProvider.revealMapInfoOriginalMap(sourceUri, lineNumber, side)
     ),
     vscode.languages.registerDocumentLinkProvider(
       [

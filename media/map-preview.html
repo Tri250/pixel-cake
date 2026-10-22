@@ -319,7 +319,7 @@ const state={
   entityDragMoved:false,entityStartX:0,entityStartY:0,entitySaveTimer:0,entityRequest:0,entityPendingRequest:0,
   entityAnimationTimers:[],safeZoneAnimationTimer:0,safeZoneFrame:0,showSpawnRange:false,
   npcTargetMapKey:'',npcMoveRequest:0,pendingNpcMoveRequest:0,
-  pendingNpcReveal:null,navigatorDragging:false,navigatorGeometry:null,navigatorMarkers:[],
+  pendingNpcReveal:null,pendingMapPointReveal:null,navigatorDragging:false,navigatorGeometry:null,navigatorMarkers:[],
   original:{active:false,ready:false,requestId:0,generation:0,viewportSeq:0,viewportTimer:0,prefetchTimer:0,
     lastViewportKey:'',pendingViewportKey:'',chunkCellWidth:16,chunkCellHeight:16,
     mapWidth:0,mapHeight:0,viewportLimited:false,appliedViewport:null,layer:null,
@@ -781,6 +781,7 @@ function centerWorldPoint(worldX,worldY,scale,requestViewport=true){
 }
 function focusNpcAt100(npc){
   if(!state.original.active||!npc)return;
+  state.pendingMapPointReveal=null;
   state.pendingNpcReveal=state.original.ready&&state.original.layer?null:{lineNumber:npc.lineNumber,x:npc.x,y:npc.y,displayName:npc.displayName};
   selectEntity('npc',npc);
   centerWorldPoint(npc.x*48+24,npc.y*32,1);
@@ -798,6 +799,36 @@ function applyPendingNpcReveal(finalize,requestViewport=true){
   }
   centerWorldPoint((Number(target.x)||0)*48+24,(Number(target.y)||0)*32,1,requestViewport);
   if(finalize)state.pendingNpcReveal=null;
+}
+function staticMapPoint(point){
+  return point&&Number.isSafeInteger(point.x)&&Number.isSafeInteger(point.y)&&point.x>=0&&point.y>=0
+    ?{x:point.x,y:point.y}:null;
+}
+function clearPendingMapReveals(){
+  state.pendingNpcReveal=null;
+  state.pendingMapPointReveal=null;
+}
+function applyPendingMapPointReveal(finalize,requestViewport=true){
+  const point=state.pendingMapPointReveal;
+  if(!state.original.active||!point)return;
+  // The miniature dimensions may differ; only the actual Ready dimensions are authoritative here.
+  if(state.original.generation&&(point.x>=state.original.mapWidth||point.y>=state.original.mapHeight)){
+    state.pendingMapPointReveal=null;
+    state.original.warning='定位坐标 '+point.x+','+point.y+' 超出地图范围 '+state.original.mapWidth+'×'+state.original.mapHeight;
+    updateStatus();
+    return;
+  }
+  centerWorldPoint(point.x*48+24,point.y*32,1,requestViewport);
+  if(finalize)state.pendingMapPointReveal=null;
+}
+function revealOriginalMapPoint(value){
+  const point=staticMapPoint(value);
+  if(!point||!state.map)return;
+  clearPendingMapReveals();
+  state.pendingMapPointReveal=point;
+  selectEntity('',null);
+  if(!state.original.active){switchToOriginalMap();return}
+  applyPendingMapPointReveal(Boolean(state.original.ready&&state.original.layer));
 }
 function updateNpcJumpSelection(){
   for(const button of npcJumpList.querySelectorAll('.npc-jump')){
@@ -1212,6 +1243,7 @@ function updateMap(data){
   state.engine=data.engine||'GOM';
   state.entityWarnings=data.entityWarnings||[];
   state.pendingNpcReveal=data.revealNpc||null;
+  state.pendingMapPointReveal=state.pendingNpcReveal?null:staticMapPoint(data.revealPoint);
   state.navigatorGeometry=null;
   state.navigatorMarkers=[];mapNavigatorOverlay.title='';
   state.warning=data.warning||'';
@@ -1268,7 +1300,7 @@ function updateMap(data){
     image.onerror=()=>{if(token!==state.imageToken)return;reset100()};
     image.src=data.imageUrl;
   }
-  if(data.originalMap||state.pendingNpcReveal)switchToOriginalMap();
+  if(data.originalMap||state.pendingNpcReveal||state.pendingMapPointReveal)switchToOriginalMap();
 }
 function updateStatus(){
   const layerText=state.original.active?'原始地图 100%':'预览地图';
@@ -1315,6 +1347,7 @@ function switchToOriginalMap(){
     flushOriginalMapViewport();
     scheduleOriginalMapAnimation();
     applyPendingNpcReveal(true);
+    applyPendingMapPointReveal(true);
     return;
   }
   state.original.ready=false;
@@ -1338,6 +1371,7 @@ function switchToOriginalMap(){
   updateStatus();
   reset100();
   applyPendingNpcReveal(false);
+  applyPendingMapPointReveal(false);
   vscode.postMessage({type:'loadOriginalMap',requestId});
 }
 function switchToPreviewMap(){
@@ -1360,7 +1394,7 @@ function switchToPreviewMap(){
   }
   releaseOriginalMapBase();
   state.original.active=false;
-  state.pendingNpcReveal=null;
+  clearPendingMapReveals();
   state.worldW=state.map&&state.map.width?state.map.width:(state.image?state.image.naturalWidth:1);
   state.worldH=state.map&&state.map.height?state.map.height:(state.image?state.image.naturalHeight:1);
   mapLayerToggle.textContent='原始地图';
@@ -1383,6 +1417,7 @@ function selectEntity(type,entity,shouldRebuild=true){
 }
 function revealMerchantNpc(target){
   if(!target)return;
+  state.pendingMapPointReveal=null;
   state.pendingNpcReveal=target;
   if(!state.original.active){switchToOriginalMap();return}
   applyPendingNpcReveal(Boolean(state.original.ready&&state.original.layer));
@@ -1758,7 +1793,7 @@ function nudgeSelectedMarker(deltaX,deltaY){
 
 viewport.addEventListener('mousedown',event=>{
   if(event.button!==0)return;
-  state.pendingNpcReveal=null;
+  clearPendingMapReveals();
   viewport.focus({preventScroll:true});
   state.dragging=true;
   state.panMoved=false;
@@ -1831,13 +1866,13 @@ viewport.addEventListener('mousemove',event=>{
 });
 viewport.addEventListener('wheel',event=>{
   event.preventDefault();
-  state.pendingNpcReveal=null;
+  clearPendingMapReveals();
   const rect=viewport.getBoundingClientRect();
   zoom(event.deltaY<0?1.2:.82,event.clientX-rect.left,event.clientY-rect.top);
 },{passive:false});
-document.getElementById('zoomIn').addEventListener('click',()=>{state.pendingNpcReveal=null;zoom(1.25,viewport.clientWidth/2,viewport.clientHeight/2)});
-document.getElementById('zoomOut').addEventListener('click',()=>{state.pendingNpcReveal=null;zoom(.8,viewport.clientWidth/2,viewport.clientHeight/2)});
-document.getElementById('reset').addEventListener('click',()=>{state.pendingNpcReveal=null;reset100();scheduleOriginalMapViewport(110)});
+document.getElementById('zoomIn').addEventListener('click',()=>{clearPendingMapReveals();zoom(1.25,viewport.clientWidth/2,viewport.clientHeight/2)});
+document.getElementById('zoomOut').addEventListener('click',()=>{clearPendingMapReveals();zoom(.8,viewport.clientWidth/2,viewport.clientHeight/2)});
+document.getElementById('reset').addEventListener('click',()=>{clearPendingMapReveals();reset100();scheduleOriginalMapViewport(110)});
 document.getElementById('refresh').addEventListener('click',()=>vscode.postMessage({type:'refresh'}));
 mapLayerToggle.addEventListener('click',()=>state.original.active?switchToPreviewMap():switchToOriginalMap());
 document.getElementById('mapNavigatorToggle').addEventListener('click',event=>{
@@ -1852,6 +1887,7 @@ document.getElementById('mapNavigatorToggle').addEventListener('click',event=>{
 });
 mapNavigatorOverlay.addEventListener('pointerdown',event=>{
   if(event.button!==0)return;
+  clearPendingMapReveals();
   event.preventDefault();event.stopPropagation();state.navigatorDragging=true;
   mapNavigatorOverlay.setPointerCapture(event.pointerId);navigateFromMapNavigator(event);
 });
@@ -2380,6 +2416,7 @@ async function loadOriginalMapData(data,legacy=false){
   render();
   scheduleOriginalMapAnimation();
   applyPendingNpcReveal(true);
+  applyPendingMapPointReveal(true);
   if(!animationIndices.length){
     if(firstViewport)finishOriginalProgress('原始地图首屏加载完成');
     if(!legacy)scheduleOriginalMapPrefetch(data);
@@ -2445,6 +2482,8 @@ window.addEventListener('message',event=>{
     return;
   }
   if(data.type==='revealOriginalMap'){
+    if(data.point!==undefined){revealOriginalMapPoint(data.point);return}
+    clearPendingMapReveals();
     switchToOriginalMap();
     return;
   }
@@ -2485,6 +2524,7 @@ window.addEventListener('message',event=>{
     reset100();
     updateMapNavigatorVisibility();
     applyPendingNpcReveal(false,false);
+    applyPendingMapPointReveal(false,false);
     flushOriginalMapViewport();
     return;
   }

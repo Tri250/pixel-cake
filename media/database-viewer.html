@@ -144,6 +144,9 @@ button{color:var(--text)}
 </header>
 <nav class="tabs" id="tabs" aria-label="数据库表"></nav>
 <section class="actions" aria-label="数据库操作">
+  <button class="command-button" id="openDatabaseFile" type="button">打开数据库…</button>
+  <button class="command-button" id="reloadDatabaseSource" type="button" title="重新打开当前数据库并丢弃旧撤销历史">重新打开</button>
+  <button class="command-button" id="addDatabaseRow" type="button">新增记录</button>
   <button class="command-button" id="manageFields" type="button" title="管理字段"><span class="command-icon">☷</span>字段管理</button>
   <button class="icon-button" id="refreshPage" type="button" title="重新读取当前表">↻</button>
   <div class="readonly-note" id="readonlyNote"></div>
@@ -181,6 +184,13 @@ button{color:var(--text)}
   <div class="status" id="status">0 条记录</div>
 </footer>
 
+<div class="modal-layer" id="mdbCreateModal" hidden>
+  <section class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="mdbCreateTitle">
+    <header class="modal-header"><div class="modal-title" id="mdbCreateTitle">新增 MDB 记录</div><button class="icon-button close-button" type="button" data-close-modal title="关闭">×</button></header>
+    <div class="modal-body"><p>选择“填写”输入值；“默认值”交由数据库处理；“NULL”写入真正空值。自动编号和二进制字段由数据库保留。</p><div class="form-grid" id="mdbCreateFields"></div></div>
+    <footer class="modal-footer"><button class="command-button" type="button" data-close-modal>取消</button><button class="command-button primary" id="mdbCreateAccept" type="button">新增</button></footer>
+  </section>
+</div>
 <div class="modal-layer" id="schemaModal" hidden>
   <section class="modal narrow" role="dialog" aria-modal="true" aria-labelledby="schemaModalTitle">
     <header class="modal-header">
@@ -502,6 +512,7 @@ function renderEquipmentFilters(){
 }
 
 function loadCatalog(message){
+  closeModals();
   tables=message.tables||[];
   databaseType=message.dbType||'';
   databaseTotal=Number(message.totalCount||0);
@@ -649,7 +660,7 @@ function renderTable(onReady){
       frozen:frozenIndex>=0,cssClass:classes.join(' '),headerSort:false,
       titleFormatter:databaseHeaderFormatter,headerTooltip:fieldDescription(column),
       formatter:column===nameColumn?databaseNameFormatter:'plaintext',
-      editor:currentTable.editable&&declaredType.indexOf('BLOB')<0?'input':false,
+      editor:databaseColumnEditable(column)?'input':false,
       headerClick:function(){sortBy(column)}
     };
   });
@@ -750,6 +761,7 @@ function updateFillHandle(){
 function beginGridFill(event){
   if(mutationPending||activeCellEdit)return;
   var source=selectedGridBounds();
+  if(rejectAccessAutomaticArithmetic(source)){event.preventDefault();event.stopPropagation();return}
   fillState={source:source,pointerRow:source.bottom,pointerColumn:source.right};
   document.getElementById('fillHandle').style.display='none';event.preventDefault();event.stopPropagation();
 }
@@ -766,6 +778,7 @@ function finishGridFill(){
   if(!fillState)return;
   var completed=tableCore.calculateFillChanges(databaseRowsAsMatrix(),fillState.source,fillState.pointerRow,fillState.pointerColumn);
   fillState=null;
+  if(rejectAccessAutomaticArithmetic(completed.bounds)){setTimeout(updateFillHandle,0);return}
   if(completed.changes.length)applyDatabaseGridChanges(completed.changes,'拖拽递增填充',completed.bounds);
   else document.getElementById('status').textContent='未扩展填充选区';
   setTimeout(updateFillHandle,0);
@@ -791,12 +804,34 @@ function setMatchMode(mode){
 }
 function queueSearch(){clearTimeout(searchTimer);searchTimer=setTimeout(function(){pageIndex=0;requestPage()},320)}
 function updateActionState(){
+  document.getElementById('openDatabaseFile').disabled=mutationPending;
+  document.getElementById('reloadDatabaseSource').disabled=mutationPending;
+  document.getElementById('addDatabaseRow').disabled=!(currentTable&&currentTable.editable&&!mutationPending);
   document.getElementById('manageFields').disabled=!(currentTable&&currentTable.schemaEditable&&!mutationPending);
   document.getElementById('refreshPage').disabled=!currentTable||mutationPending;
   var note='';
-  if(currentTable&&!currentTable.editable)note=currentTable.kind==='access'?'MDB 只读':(currentTable.schemaEditReason||'当前表只读');
+  if(currentTable&&!currentTable.editable)note=currentTable.editReason||(currentTable.kind==='access'?'MDB 只读':(currentTable.schemaEditReason||'当前表只读'));
   else if(currentTable&&!currentTable.schemaEditable)note=currentTable.schemaEditReason||'字段结构受保护';
   document.getElementById('readonlyNote').textContent=note;
+  document.getElementById('readonlyNote').title=note;
+}
+function databaseColumnEditable(column){
+  if(!currentTable||!currentTable.editable)return false;
+  if((currentTable.readonlyColumns||[]).indexOf(column)>=0)return false;
+  return !/\b(BLOB|BINARY|OLE|COMPLEX|UNSUPPORTED)\b/i.test(String((currentTable.columnTypes||{})[column]||''));
+}
+function accessExactNumberSelection(bounds){
+  if(!currentTable||currentTable.kind!=='access'||!bounds)return false;
+  for(var index=Math.min(bounds.left,bounds.right);index<=Math.max(bounds.left,bounds.right);index++){
+    var column=currentColumns[index],type=String((currentTable.columnTypes||{})[column]||'');
+    if(/^(CURRENCY|NUMERIC|BIGINT)$/i.test(type))return true;
+  }
+  return false;
+}
+function rejectAccessAutomaticArithmetic(bounds){
+  if(!accessExactNumberSelection(bounds))return false;
+  document.getElementById('status').textContent='MDB 精确数值字段不支持自动算术递增或拖动序列。请手工输入、粘贴精确数值，或用 Ctrl+D 复制填充。';
+  return true;
 }
 
 function closeModals(){
@@ -804,6 +839,7 @@ function closeModals(){
   document.getElementById('schemaModal').hidden=true;
   document.getElementById('confirmModal').hidden=true;
   document.getElementById('incrementModal').hidden=true;incrementBounds=null;
+  document.getElementById('mdbCreateModal').hidden=true;
   confirmAction=null;
 }
 function showConfirmDialog(title,message,confirmLabel,action){
@@ -828,6 +864,7 @@ function protectCellEditorSelection(cell){
 function openIncrementModal(){
   if(!currentTable||!currentTable.editable||mutationPending)return;
   var bounds=selectedGridBounds(),count=(bounds.bottom-bounds.top+1)*(bounds.right-bounds.left+1);
+  if(rejectAccessAutomaticArithmetic(bounds))return;
   if(count<2){document.getElementById('status').textContent='请先选择多个数值单元格';return}
   incrementBounds=bounds;
   var input=document.getElementById('incrementValue'),summary=document.getElementById('incrementSummary');
@@ -837,6 +874,7 @@ function openIncrementModal(){
 }
 function applySelectionIncrement(){
   if(!incrementBounds||mutationPending)return;
+  if(rejectAccessAutomaticArithmetic(incrementBounds)){incrementBounds=null;document.getElementById('incrementModal').hidden=true;return}
   var input=document.getElementById('incrementValue'),summary=document.getElementById('incrementSummary'),text=String(input.value||'').trim();
   if(!/^[+-]?(?:\d+(?:\.\d*)?|\.\d+)$/.test(text)||!Number.isFinite(Number(text))||Number(text)===0){summary.textContent='请输入非 0 的有效数值';summary.classList.add('error');input.focus();input.select();return}
   var bounds=incrementBounds,result=tableCore.calculateIncrementChanges(databaseRowsAsMatrix(),bounds,text);
@@ -851,7 +889,7 @@ function startCellEdit(initialValue,cell){
   if(!target){var bounds=selectedGridBounds();target=getGridCell(bounds.top,bounds.left)}
   if(!target)return;
   var column=target.getField(),declaredType=String((currentTable.columnTypes&&currentTable.columnTypes[column])||'').toUpperCase();
-  if(declaredType.indexOf('BLOB')>=0){document.getElementById('status').textContent='二进制字段不可直接编辑';return}
+  if(!databaseColumnEditable(column)){document.getElementById('status').textContent='此字段受保护，不能直接编辑';return}
   target.edit(true);
   setTimeout(function(){
     var input=target.getElement().querySelector('input,textarea');if(!input)return;
@@ -941,7 +979,30 @@ function requestDatabaseUndo(){
 }
 function addEmptyRow(){
   if(!currentTable||!currentTable.editable||mutationPending)return;
+  if(currentTable.kind==='access'){
+    var root=document.getElementById('mdbCreateFields');root.innerHTML='';
+    currentColumns.filter(databaseColumnEditable).forEach(function(column){
+      var field=document.createElement('label');field.className='form-field';field.dataset.column=column;
+      var label=document.createElement('span');label.className='form-label';label.textContent=column+' ('+((currentTable.columnTypes||{})[column]||'TEXT')+')';
+      var mode=document.createElement('select');mode.className='select';
+      [['omit','默认值'],['value','填写'],['null','NULL']].forEach(function(entry){var option=document.createElement('option');option.value=entry[0];option.textContent=entry[1];mode.appendChild(option)});
+      var input=document.createElement('input');input.className='text-input';input.type='text';input.autocomplete='off';
+      input.addEventListener('input',function(){mode.value='value'});
+      field.appendChild(label);field.appendChild(mode);field.appendChild(input);root.appendChild(field);
+    });
+    document.getElementById('mdbCreateModal').hidden=false;return;
+  }
   sendCreateDatabaseRow({});
+}
+function submitMdbCreate(){
+  if(mutationPending||!currentTable||currentTable.kind!=='access')return;
+  var values=Object.create(null);
+  document.querySelectorAll('#mdbCreateFields .form-field').forEach(function(field){
+    var mode=field.querySelector('select').value;
+    if(mode==='value')values[field.dataset.column]=field.querySelector('input').value;
+    else if(mode==='null')values[field.dataset.column]=null;
+  });
+  document.getElementById('mdbCreateModal').hidden=true;sendCreateDatabaseRow(values);
 }
 function databaseRowsAsMatrix(){
   return currentRows.map(function(row){return currentColumns.map(function(column){return formatValue(row[column])})});
@@ -974,7 +1035,7 @@ function applyDatabaseGridChanges(changes,label,bounds){
     var rowIndex=Number(change.row),columnIndex=Number(change.column),row=currentRows[rowIndex],column=currentColumns[columnIndex];
     if(!row||!column)return;
     var declaredType=String((currentTable.columnTypes&&currentTable.columnTypes[column])||'').toUpperCase();
-    if(declaredType.indexOf('BLOB')>=0){skipped++;return}
+    if(!databaseColumnEditable(column)){skipped++;return}
     var value=change.value==null?'':String(change.value);if(formatValue(row[column])===value)return;
     var key=String(row.__booRowId),entry=grouped.get(key);if(!entry){entry={rowId:row.__booRowId,values:{}};grouped.set(key,entry)}
     entry.values[column]=value;
@@ -1012,7 +1073,7 @@ function copySelectedRow(){
   var values={};
   currentColumns.forEach(function(column){
     var declaredType=String((currentTable.columnTypes&&currentTable.columnTypes[column])||'').toUpperCase();
-    if(declaredType.indexOf('BLOB')<0)values[column]=row[column];
+    if(databaseColumnEditable(column))values[column]=row[column];
   });
   copiedRowData={tableId:currentTable.id,values:values};
   document.getElementById('status').textContent='已复制选中行';
@@ -1192,6 +1253,10 @@ document.getElementById('lastPage').addEventListener('click',function(){goToPage
 document.getElementById('pageNumber').addEventListener('change',function(){goToPage((Number(this.value)||1)-1)});
 document.getElementById('manageFields').addEventListener('click',openSchemaModal);
 document.getElementById('refreshPage').addEventListener('click',requestPage);
+document.getElementById('openDatabaseFile').addEventListener('click',function(){if(!mutationPending)vscode.postMessage({type:'selectDatabaseFile'})});
+document.getElementById('reloadDatabaseSource').addEventListener('click',function(){if(!mutationPending)vscode.postMessage({type:'reloadDatabaseSource'})});
+document.getElementById('addDatabaseRow').addEventListener('click',addEmptyRow);
+document.getElementById('mdbCreateAccept').addEventListener('click',submitMdbCreate);
 document.getElementById('addField').addEventListener('click',addSchemaField);
 document.getElementById('applySchema').addEventListener('click',applySchemaChanges);
 document.getElementById('confirmCancel').addEventListener('click',function(){finishConfirmDialog(false)});

@@ -35,6 +35,7 @@ async function main() {
     asRelativePath: target => path.relative(temporary, target),
   };
   const scope = {
+    ...require('../out/utils/variable-list'),
     ...require('../out/utils/variable-candidates'),
     ...require('../out/utils/variable-statistics'),
     ...require('../out/utils/text'),
@@ -80,6 +81,15 @@ async function main() {
     assert.match(html, /G999<\/td><td class="col-count">1/);
     assert.match(html, /\[1\]<\/td><td class="col-count">1/);
     assert.ok(html.includes('main.TXT'));
+    fs.writeFileSync(file, 'MOV N$原变量 20\nMOV N$新变量 <$STR(N$原变量)>\nINC N$新变量 10\nEQUAL U<$STR(N$新变量)> 0');
+    scope.invalidateCandidateUsage();
+    await scope.analyzeVariables();
+    const derivedHtml = reports[1].webview.html;
+    assert.match(derivedHtml, /U30<\/td><td class="col-count">1/);
+    assert.ok(!derivedHtml.includes('U20</td>'));
+    assert.ok(derivedHtml.includes('确定推导 1处'));
+    assert.ok(derivedHtml.includes('不是运行次数'));
+    assert.ok(!derivedHtml.includes('id="totalTypes">-'));
     const originalRead = fs.promises.readFile;
     try {
       fs.promises.readFile = async function(target, ...args) {
