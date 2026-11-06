@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOO 可视化编辑器 · 界面预览</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-text: #1A1759;
+  --chart-series-1: #3C2ECA;
+  --chart-series-2: #A9AEFF;
+  --chart-series-4: #22A5F7;
+  --accent: #27D2BF;
+  --success: #1DC981;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-text: #CFD8FF;
+    --chart-series-1: #4B3FE3;
+  }
+}
+* { margin: 0; padding: 0; }
+body { background: var(--surface); color: var(--text); font: 400 14px/20px var(--font-sans); display: flex; flex-direction: column; align-items: center; padding: 24px; }
+h1 { font: 500 16px/24px var(--font-sans); margin-bottom: 4px; }
+h2 { font: 500 16px/24px var(--font-sans); margin: 32px 0 4px; align-self: center; }
+.sub { font: 400 12px/18px var(--font-sans); color: var(--text-muted); margin-bottom: 20px; text-align: center; }
+.frame { width: 100%; max-width: 960px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+svg { width: 100%; height: auto; display: block; }
+.th { fill: var(--text); font: 500 14px/20px var(--font-sans); }
+.tt { fill: var(--text); font: 500 12px/18px var(--font-sans); }
+.ts { fill: var(--text-muted); font: 400 12px/18px var(--font-sans); }
+.tc { fill: var(--text); font: 400 12px/18px var(--font-sans); }
+.tb { fill: var(--brand-text); font: 500 12px/18px var(--font-sans); }
+.tw { fill: #FFFFFF; font: 500 12px/18px var(--font-sans); }
+.tm { font: 400 12px/18px var(--font-mono); }
+.card { fill: var(--surface); stroke: var(--border); }
+</style>
+</head>
+<body>
+<h1>BOO 可视化编辑器 V4.4.2 · 界面预览</h1>
+<div class="sub">主工作台与核心功能界面示意（示例数据）</div>
+
+<h2>主工作台</h2>
+<div class="sub">活动栏 8 视图 · 补丁管理树 · 脚本语法高亮 · 变量列表</div>
+<div class="frame">
+<svg viewBox="0 0 720 470" role="img" aria-label="BOO 主工作台界面预览">
+  <rect x="24" y="16" width="672" height="372" rx="12" fill="var(--surface)" stroke="var(--border)"/>
+  <circle cx="44" cy="32" r="5" fill="var(--border)"/>
+  <circle cx="60" cy="32" r="5" fill="var(--border)"/>
+  <circle cx="76" cy="32" r="5" fill="var(--border)"/>
+  <text x="360" y="37" text-anchor="middle" class="ts">BOO 可视化编辑器 · Visual Studio Code（界面示意）</text>
+  <line x1="24" y1="48" x2="696" y2="48" stroke="var(--border)"/>
+
+  <rect x="24" y="48" width="44" height="340" fill="var(--surface-muted)"/>
+  <rect x="38" y="64" width="16" height="16" rx="8" fill="var(--brand)"/>
+  <rect x="38" y="100" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="136" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="172" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="208" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="244" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="280" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+  <rect x="38" y="316" width="16" height="16" rx="5" fill="none" stroke="var(--border)"/>
+
+  <rect x="68" y="48" width="176" height="340" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="84" y="70" class="th" font-size="12">补丁管理</text>
+  <rect x="84" y="80" width="144" height="20" rx="10" fill="var(--surface-muted)"/>
+  <text x="92" y="94" class="ts">筛选…</text>
+  <text x="84" y="126" class="ts">▾ Mir200 补丁</text>
+  <rect x="84" y="138" width="152" height="22" rx="6" fill="var(--brand-soft)" stroke="var(--brand)"/>
+  <text x="92" y="153" class="tm" fill="var(--brand-text)">sfx.pak</text>
+  <text x="230" y="153" text-anchor="end" class="ts" fill="var(--brand-text)">2.1万图</text>
+  <text x="92" y="178" class="tm">eq_pak.pak</text>
+  <text x="230" y="178" text-anchor="end" class="ts">8,642 图</text>
+  <text x="84" y="204" class="ts">▾ WIL 资源组</text>
+  <text x="92" y="230" class="tm">map.wil + wix</text>
+  <text x="230" y="230" text-anchor="end" class="ts">成对</text>
+  <text x="84" y="256" class="ts">▾ WZL 成对编辑</text>
+  <text x="92" y="282" class="tm">effect.wzl</text>
+  <text x="230" y="282" text-anchor="end" class="ts">Windows</text>
+  <text x="92" y="308" class="tm">hp.jpk</text>
+  <text x="230" y="308" text-anchor="end" class="ts">可编辑</text>
+  <text x="92" y="334" class="tm" fill="var(--text-muted)">Pak.txt</text>
+  <text x="230" y="334" text-anchor="end" class="ts">密码管理</text>
+
+  <rect x="244" y="48" width="312" height="340" fill="var(--surface-muted)"/>
+  <rect x="244" y="48" width="110" height="24" fill="var(--surface)"/>
+  <rect x="244" y="48" width="110" height="2" fill="var(--brand)"/>
+  <text x="252" y="64" class="tm">Merchant.txt</text>
+  <text x="362" y="64" class="tm" fill="var(--text-muted)">StartPoint.txt</text>
+  <text x="256" y="98" text-anchor="end" class="tm" fill="var(--text-muted)">1</text>
+  <text x="266" y="98" class="tm" fill="var(--brand)">[@main]</text>
+  <text x="256" y="118" text-anchor="end" class="tm" fill="var(--text-muted)">2</text>
+  <text x="266" y="118" class="tm" fill="var(--chart-series-4)">#IF</text>
+  <text x="256" y="138" text-anchor="end" class="tm" fill="var(--text-muted)">3</text>
+  <text x="266" y="138" class="tm"><tspan fill="var(--chart-series-4)">#SAY</tspan><tspan fill="var(--text)"> 你好，勇士</tspan></text>
+  <text x="256" y="158" text-anchor="end" class="tm" fill="var(--text-muted)">4</text>
+  <text x="266" y="158" class="tm" fill="var(--text)">欢迎<tspan fill="var(--chart-series-2)">&lt;ImgEx:101:1:0&gt;</tspan></text>
+  <text x="256" y="178" text-anchor="end" class="tm" fill="var(--text-muted)">5</text>
+  <text x="266" y="178" class="tm" fill="var(--chart-series-2)">{长空之刃/fcolor=250}</text>
+  <text x="256" y="198" text-anchor="end" class="tm" fill="var(--text-muted)">6</text>
+  <text x="266" y="198" class="tm" fill="var(--chart-series-4)">#ACT</text>
+  <text x="256" y="218" text-anchor="end" class="tm" fill="var(--text-muted)">7</text>
+  <text x="266" y="218" class="tm"><tspan fill="var(--chart-series-1)">GIVE</tspan><tspan fill="var(--text)"> 长空之刃 1</tspan></text>
+  <text x="256" y="238" text-anchor="end" class="tm" fill="var(--text-muted)">8</text>
+  <text x="266" y="238" class="tm"><tspan fill="var(--chart-series-1)">GIVE</tspan><tspan fill="var(--text)"> 金创药 3</tspan></text>
+  <text x="256" y="258" text-anchor="end" class="tm" fill="var(--text-muted)">9</text>
+  <text x="266" y="258" class="tm" fill="var(--chart-series-4)">BREAK</text>
+  <text x="256" y="278" text-anchor="end" class="tm" fill="var(--text-muted)">10</text>
+  <text x="266" y="278" class="tm" fill="var(--text-muted)">; 保存后自动触发 M2 重载</text>
+  <text x="256" y="298" text-anchor="end" class="tm" fill="var(--text-muted)">11</text>
+  <text x="266" y="298" class="tm" fill="var(--brand)">[@send]</text>
+  <text x="256" y="318" text-anchor="end" class="tm" fill="var(--text-muted)">12</text>
+  <text x="266" y="318" class="tm" fill="var(--chart-series-4)">#ACT</text>
+  <text x="256" y="338" text-anchor="end" class="tm" fill="var(--text-muted)">13</text>
+  <text x="266" y="338" class="tm"><tspan fill="var(--chart-series-1)">MAPMOVE</tspan><tspan fill="var(--text)"> 3 330 330</tspan></text>
+
+  <rect x="556" y="48" width="140" height="340" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="572" y="70" class="th" font-size="12">变量列表</text>
+  <text x="684" y="70" text-anchor="end" class="ts">⟳</text>
+  <text x="572" y="98" class="tm">P0</text><text x="684" y="98" text-anchor="end" class="tm" fill="var(--text-muted)">128</text>
+  <rect x="572" y="102" width="90" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <text x="572" y="126" class="tm">P9</text><text x="684" y="126" text-anchor="end" class="tm" fill="var(--text-muted)">96</text>
+  <rect x="572" y="130" width="67" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <text x="572" y="154" class="tm">G99</text><text x="684" y="154" text-anchor="end" class="tm" fill="var(--text-muted)">64</text>
+  <rect x="572" y="158" width="45" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <text x="572" y="182" class="tm">A450</text><text x="684" y="182" text-anchor="end" class="tm" fill="var(--text-muted)">32</text>
+  <rect x="572" y="186" width="22" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <text x="572" y="210" class="tm">U8</text><text x="684" y="210" text-anchor="end" class="tm" fill="var(--text-muted)">12</text>
+  <rect x="572" y="214" width="8" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <text x="572" y="238" class="tm">T12</text><text x="684" y="238" text-anchor="end" class="tm" fill="var(--text-muted)">8</text>
+  <rect x="572" y="242" width="6" height="4" rx="2" fill="var(--chart-series-1)"/>
+  <rect x="572" y="262" width="108" height="24" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/>
+  <text x="626" y="278" text-anchor="middle" class="ts">刷新 · 跳转</text>
+
+  <rect x="24" y="400" width="110" height="24" rx="8" fill="var(--brand-soft)" stroke="var(--brand)"/>
+  <text x="79" y="416" text-anchor="middle" class="tb">引擎 GOM</text>
+  <rect x="142" y="400" width="110" height="24" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="197" y="416" text-anchor="middle" class="ts">编码 GBK</text>
+  <rect x="260" y="400" width="110" height="24" rx="8" fill="var(--surface)" stroke="var(--success)"/>
+  <text x="315" y="416" text-anchor="middle" class="ts" fill="var(--success)">M2 已连接</text>
+  <rect x="378" y="400" width="170" height="24" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="463" y="416" text-anchor="middle" class="ts">Ctrl+F12 打开 UI 编辑</text>
+  <text x="360" y="450" text-anchor="middle" class="ts">活动栏 8 视图：补丁管理 · 使用教程 · 常用指令 · 变量列表 · 脚本助手 · 数据库 · 地图预览 · DeepSeek</text>
+</svg>
+</div>
+
+<h2>核心功能界面</h2>
+<div class="sub">UI 编辑器 · 数据库编辑器 · 资源工作台 · 地图预览</div>
+<div class="frame">
+<svg viewBox="0 0 720 480" role="img" aria-label="BOO 功能界面缩略预览">
+
+  <rect x="20" y="40" width="316" height="180" rx="12" class="card"/>
+  <text x="36" y="62" class="tt">UI 可视化编辑器</text>
+  <rect x="32" y="74" width="192" height="132" rx="8" fill="var(--surface-muted)"/>
+  <rect x="44" y="86" width="168" height="108" rx="6" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="52" y="104" class="tt">任务提示</text>
+  <text x="52" y="124" class="tc">击败沃玛教主</text>
+  <rect x="52" y="136" width="64" height="18" rx="8" fill="var(--brand)"/>
+  <text x="84" y="149" text-anchor="middle" class="tw">接取任务</text>
+  <rect x="124" y="142" width="76" height="8" rx="4" fill="var(--border)"/>
+  <rect x="124" y="142" width="50" height="8" rx="4" fill="var(--chart-series-2)"/>
+  <text x="52" y="178" class="ts">倒计时 08 · fcolor=250 黑色保留</text>
+  <text x="232" y="84" class="ts">X</text>
+  <text x="316" y="84" text-anchor="end" class="tm">120</text>
+  <line x1="232" y1="90" x2="316" y2="90" stroke="var(--border)"/>
+  <text x="232" y="110" class="ts">Y</text>
+  <text x="316" y="110" text-anchor="end" class="tm">220</text>
+  <line x1="232" y1="116" x2="316" y2="116" stroke="var(--border)"/>
+  <text x="232" y="136" class="ts">文字色</text>
+  <text x="316" y="136" text-anchor="end" class="tm">250</text>
+  <line x1="232" y1="142" x2="316" y2="142" stroke="var(--border)"/>
+  <text x="232" y="162" class="ts">拖拽 · 属性面板 · 背景锁定</text>
+  <text x="178" y="240" text-anchor="middle" class="ts">UI 可视化编辑器 · 代码 ↔ 画布往返保真</text>
+
+  <rect x="384" y="40" width="316" height="180" rx="12" class="card"/>
+  <text x="400" y="62" class="tt">数据库编辑器</text>
+  <rect x="396" y="74" width="292" height="20" fill="var(--surface-muted)"/>
+  <text x="404" y="88" class="ts">物品</text>
+  <text x="470" y="88" class="ts">名称</text>
+  <text x="680" y="88" text-anchor="end" class="ts">数量</text>
+  <rect x="396" y="114" width="292" height="20" fill="var(--surface-muted)"/>
+  <text x="404" y="108" class="tm">101</text>
+  <text x="470" y="108" class="tc">长空之刃</text>
+  <text x="680" y="108" text-anchor="end" class="tm">1</text>
+  <text x="404" y="128" class="tm">102</text>
+  <text x="470" y="128" class="tc">金创药</text>
+  <text x="680" y="128" text-anchor="end" class="tm">3</text>
+  <text x="404" y="148" class="tm">103</text>
+  <text x="470" y="148" class="tc">魔法药</text>
+  <text x="680" y="148" text-anchor="end" class="tm">5</text>
+  <text x="404" y="168" class="tm">104</text>
+  <text x="470" y="168" class="tc">随机传送卷</text>
+  <text x="680" y="168" text-anchor="end" class="tm">9</text>
+  <text x="404" y="200" class="ts">◀ 1 / 128 ▶</text>
+  <rect x="560" y="184" width="56" height="22" rx="8" fill="var(--brand)"/>
+  <text x="588" y="199" text-anchor="middle" class="tw">保存</text>
+  <rect x="624" y="184" width="56" height="22" rx="8" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="652" y="199" text-anchor="middle" class="ts">撤销</text>
+  <text x="542" y="240" text-anchor="middle" class="ts">数据库编辑器 · 分页浏览与撤销回滚</text>
+
+  <rect x="20" y="252" width="316" height="180" rx="12" class="card"/>
+  <text x="36" y="274" class="tt">补丁资源工作台</text>
+  <g>
+    <rect x="36" y="286" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="53" y="307" text-anchor="middle" class="ts">100</text>
+    <rect x="78" y="286" width="34" height="34" rx="8" fill="var(--brand-soft)" stroke="var(--brand)"/><text x="95" y="307" text-anchor="middle" class="tb">101</text>
+    <rect x="120" y="286" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="137" y="307" text-anchor="middle" class="ts">102</text>
+    <rect x="162" y="286" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="179" y="307" text-anchor="middle" class="ts">103</text>
+    <rect x="204" y="286" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="221" y="307" text-anchor="middle" class="ts">104</text>
+    <rect x="36" y="328" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="53" y="349" text-anchor="middle" class="ts">105</text>
+    <rect x="78" y="328" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="95" y="349" text-anchor="middle" class="ts">106</text>
+    <rect x="120" y="328" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="137" y="349" text-anchor="middle" class="ts">107</text>
+    <rect x="162" y="328" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="179" y="349" text-anchor="middle" class="ts">108</text>
+    <rect x="204" y="328" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="221" y="349" text-anchor="middle" class="ts">109</text>
+    <rect x="36" y="370" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="53" y="391" text-anchor="middle" class="ts">110</text>
+    <rect x="78" y="370" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="95" y="391" text-anchor="middle" class="ts">111</text>
+    <rect x="120" y="370" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="137" y="391" text-anchor="middle" class="ts">112</text>
+    <rect x="162" y="370" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="179" y="391" text-anchor="middle" class="ts">113</text>
+    <rect x="204" y="370" width="34" height="34" rx="8" fill="var(--surface-muted)" stroke="var(--border)"/><text x="221" y="391" text-anchor="middle" class="ts">114</text>
+  </g>
+  <text x="252" y="298" class="ts">X</text>
+  <text x="316" y="298" text-anchor="end" class="tm">12</text>
+  <line x1="252" y1="304" x2="316" y2="304" stroke="var(--border)"/>
+  <text x="252" y="324" class="ts">Y</text>
+  <text x="316" y="324" text-anchor="end" class="tm">8</text>
+  <line x1="252" y1="330" x2="316" y2="330" stroke="var(--border)"/>
+  <rect x="252" y="344" width="64" height="22" rx="8" fill="var(--brand)"/>
+  <text x="284" y="359" text-anchor="middle" class="tw">另存</text>
+  <text x="252" y="390" class="ts">⟲ 撤销 · ⟳ 重做</text>
+  <text x="178" y="452" text-anchor="middle" class="ts">补丁资源工作台 · 槽位编辑与另存</text>
+
+  <rect x="384" y="252" width="316" height="180" rx="12" class="card"/>
+  <text x="400" y="274" class="tt">地图预览</text>
+  <rect x="396" y="286" width="192" height="118" rx="8" fill="var(--surface-muted)"/>
+  <g stroke="var(--border)" stroke-width="1">
+    <line x1="420" y1="286" x2="420" y2="404"/><line x1="444" y1="286" x2="444" y2="404"/>
+    <line x1="468" y1="286" x2="468" y2="404"/><line x1="492" y1="286" x2="492" y2="404"/>
+    <line x1="516" y1="286" x2="516" y2="404"/><line x1="540" y1="286" x2="540" y2="404"/>
+    <line x1="564" y1="286" x2="564" y2="404"/>
+    <line x1="396" y1="316" x2="588" y2="316"/><line x1="396" y1="346" x2="588" y2="346"/>
+    <line x1="396" y1="376" x2="588" y2="376"/>
+  </g>
+  <ellipse cx="440" cy="312" rx="28" ry="14" fill="none" stroke="var(--accent)" stroke-dasharray="4 3"/>
+  <circle cx="436" cy="344" r="4" fill="var(--chart-series-1)"/>
+  <circle cx="472" cy="362" r="4" fill="var(--chart-series-1)"/>
+  <circle cx="512" cy="336" r="4" fill="var(--chart-series-1)"/>
+  <circle cx="444" cy="390" r="4" fill="var(--chart-series-4)"/>
+  <circle cx="528" cy="382" r="4" fill="var(--chart-series-4)"/>
+  <circle cx="596" cy="296" r="4" fill="var(--chart-series-1)"/>
+  <text x="606" y="301" class="tc">NPC 屠夫 320,280</text>
+  <circle cx="596" cy="320" r="4" fill="var(--chart-series-1)"/>
+  <text x="606" y="325" class="tc">NPC 药店 340,300</text>
+  <circle cx="596" cy="344" r="4" fill="var(--chart-series-4)"/>
+  <text x="606" y="349" class="tc">刷怪 沃玛战士</text>
+  <circle cx="596" cy="368" r="4" fill="var(--accent)"/>
+  <text x="606" y="373" class="tc">安全区 300,260</text>
+  <text x="596" y="396" class="ts">拖拽落盘 · 行指纹校验</text>
+  <text x="542" y="452" text-anchor="middle" class="ts">地图预览 · 实体标注与拖拽落盘</text>
+</svg>
+</div>
+</body>
+</html>

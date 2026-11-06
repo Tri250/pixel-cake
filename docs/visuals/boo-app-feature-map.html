@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BOO 可视化编辑器 · 应用功能全景图</title>
+<style>
+:root {
+  color-scheme: light;
+  --surface: #F7F7F8;
+  --surface-muted: #EFEFF2;
+  --text: #171717;
+  --text-muted: #52525B;
+  --border: rgba(23, 23, 23, 0.12);
+  --brand: #4B3FE3;
+  --brand-soft: #F2F7FF;
+  --brand-text: #1A1759;
+  --font-sans: "SF Pro Text", "PingFang SC", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --surface: #171717;
+    --surface-muted: #262626;
+    --text: #E5E5E5;
+    --text-muted: #A1A1AA;
+    --border: rgba(229, 229, 229, 0.12);
+    --brand: #6054F1;
+    --brand-soft: #1A1759;
+    --brand-text: #CFD8FF;
+  }
+}
+* { margin: 0; padding: 0; }
+body { background: var(--surface); color: var(--text); font: 400 14px/20px var(--font-sans); display: flex; flex-direction: column; align-items: center; padding: 24px; }
+h1 { font: 500 16px/24px var(--font-sans); margin-bottom: 4px; }
+.sub { font: 400 12px/18px var(--font-sans); color: var(--text-muted); margin-bottom: 20px; }
+.frame { width: 100%; max-width: 960px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+svg { width: 100%; height: auto; display: block; }
+.th { fill: var(--text); font: 500 14px/20px var(--font-sans); }
+.ts { fill: var(--text-muted); font: 400 12px/18px var(--font-sans); }
+.tc { fill: var(--text); font: 400 12px/18px var(--font-sans); }
+.tb { fill: var(--brand-text); font: 500 12px/18px var(--font-sans); }
+.arr { stroke: var(--text-muted); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; fill: none; }
+.grp { fill: var(--surface); stroke: var(--border); stroke-dasharray: 6 4; }
+.chip { fill: var(--surface-muted); stroke: var(--border); }
+</style>
+</head>
+<body>
+<h1>BOO 可视化编辑器 V4.4.2 · 应用功能全景图</h1>
+<div class="sub">12 大模块分层结构 · 8 侧栏视图 · 51 条命令 · 553 项回归全部通过</div>
+<div class="frame">
+<svg viewBox="0 0 720 570" role="img" aria-label="BOO 应用功能全景图">
+  <defs>
+    <marker id="arrhead" viewBox="0 0 8 8" refX="7" refY="4" markerWidth="8" markerHeight="8" markerUnits="userSpaceOnUse" orient="auto">
+      <path d="M1 1 L7 4 L1 7 Z" fill="var(--text-muted)"/>
+    </marker>
+  </defs>
+
+  <rect x="170" y="30" width="380" height="36" rx="18" fill="var(--surface)" stroke="var(--border)"/>
+  <text x="360" y="53" text-anchor="middle" class="ts">VS Code 工作台 · 8 侧栏视图 · 51 条命令 · 8 组快捷键</text>
+
+  <path d="M360 66 L360 82" class="arr" marker-end="url(#arrhead)"/>
+
+  <rect x="40" y="86" width="640" height="68" rx="12" fill="var(--brand-soft)" stroke="var(--brand)"/>
+  <text x="60" y="112" class="th" fill="var(--brand-text)">BOO 脚本内核</text>
+  <g>
+    <rect x="56" y="120" width="112" height="28" rx="8" fill="var(--surface)" stroke="var(--brand)"/>
+    <text x="112" y="138" text-anchor="middle" class="tb">语法高亮</text>
+    <rect x="180" y="120" width="112" height="28" rx="8" fill="var(--surface)" stroke="var(--brand)"/>
+    <text x="236" y="138" text-anchor="middle" class="tb">代码补全</text>
+    <rect x="304" y="120" width="112" height="28" rx="8" fill="var(--surface)" stroke="var(--brand)"/>
+    <text x="360" y="138" text-anchor="middle" class="tb">诊断审查</text>
+    <rect x="428" y="120" width="112" height="28" rx="8" fill="var(--surface)" stroke="var(--brand)"/>
+    <text x="484" y="138" text-anchor="middle" class="tb">代码折叠</text>
+    <rect x="552" y="120" width="112" height="28" rx="8" fill="var(--surface)" stroke="var(--brand)"/>
+    <text x="608" y="138" text-anchor="middle" class="tb">CodeLens</text>
+  </g>
+
+  <path d="M360 154 L360 170" class="arr" marker-end="url(#arrhead)"/>
+
+  <rect x="40" y="174" width="308" height="140" rx="12" class="grp"/>
+  <text x="58" y="200" class="th">可视化编辑</text>
+  <rect x="58" y="218" width="132" height="30" rx="8" class="chip"/>
+  <text x="124" y="237" text-anchor="middle" class="tc">UI 可视化编辑器</text>
+  <rect x="198" y="218" width="132" height="30" rx="8" class="chip"/>
+  <text x="264" y="237" text-anchor="middle" class="tc">NPC 界面编辑器</text>
+  <rect x="58" y="258" width="132" height="30" rx="8" class="chip"/>
+  <text x="124" y="277" text-anchor="middle" class="tc">地图查看器</text>
+  <rect x="198" y="258" width="132" height="30" rx="8" class="chip"/>
+  <text x="264" y="277" text-anchor="middle" class="tc">地图预览编辑</text>
+
+  <rect x="372" y="174" width="308" height="140" rx="12" class="grp"/>
+  <text x="390" y="200" class="th">数据与资源</text>
+  <rect x="390" y="218" width="132" height="30" rx="8" class="chip"/>
+  <text x="456" y="237" text-anchor="middle" class="tc">数据库编辑器</text>
+  <rect x="530" y="218" width="132" height="30" rx="8" class="chip"/>
+  <text x="596" y="237" text-anchor="middle" class="tc">爆率分析</text>
+  <rect x="390" y="258" width="132" height="30" rx="8" class="chip"/>
+  <text x="456" y="277" text-anchor="middle" class="tc">补丁资源工作台</text>
+  <rect x="530" y="258" width="132" height="30" rx="8" class="chip"/>
+  <text x="596" y="277" text-anchor="middle" class="tc">CSV · XLS 表格</text>
+
+  <path d="M360 314 L360 330" class="arr" marker-end="url(#arrhead)"/>
+
+  <rect x="40" y="334" width="308" height="140" rx="12" class="grp"/>
+  <text x="58" y="360" class="th">运维与同步</text>
+  <rect x="58" y="378" width="132" height="30" rx="8" class="chip"/>
+  <text x="124" y="397" text-anchor="middle" class="tc">变量列表</text>
+  <rect x="198" y="378" width="132" height="30" rx="8" class="chip"/>
+  <text x="264" y="397" text-anchor="middle" class="tc">多区同步</text>
+  <rect x="58" y="418" width="132" height="30" rx="8" class="chip"/>
+  <text x="124" y="437" text-anchor="middle" class="tc">脚本同步</text>
+  <rect x="198" y="418" width="132" height="30" rx="8" class="chip"/>
+  <text x="264" y="437" text-anchor="middle" class="tc">M2 重载 · 日志清理</text>
+
+  <rect x="372" y="334" width="308" height="140" rx="12" class="grp"/>
+  <text x="390" y="360" class="th">助手与交付</text>
+  <rect x="390" y="378" width="132" height="30" rx="8" class="chip"/>
+  <text x="456" y="397" text-anchor="middle" class="tc">DeepSeek 助手</text>
+  <rect x="530" y="378" width="132" height="30" rx="8" class="chip"/>
+  <text x="596" y="397" text-anchor="middle" class="tc">字体 · 颜色设置</text>
+  <rect x="390" y="418" width="132" height="30" rx="8" class="chip"/>
+  <text x="456" y="437" text-anchor="middle" class="tc">EXE 安装程序</text>
+  <rect x="530" y="418" width="132" height="30" rx="8" class="chip"/>
+  <text x="596" y="437" text-anchor="middle" class="tc">CI 发布同源</text>
+
+  <path d="M360 474 L360 490" class="arr" marker-end="url(#arrhead)"/>
+
+  <rect x="200" y="494" width="320" height="36" rx="18" fill="var(--brand-soft)" stroke="var(--brand)"/>
+  <text x="360" y="516" text-anchor="middle" class="tb">12 大模块 · 553 项回归测试全部通过</text>
+</svg>
+</div>
+</body>
+</html>
