@@ -115,7 +115,7 @@ async function run(){
   assert.equal(reloads,1,'the relevant companion still refreshes after debounce');
   assert.equal(fs.readFileSync(primaryPath,'utf8'),source,'Apply fixture models an unsaved editor, not writing user files');
   console.log('preview-script-provider.test.js: PASS production createModel/read/locate/click/apply/conflict with VS Code stub');
- }finally{assert.ok(path.dirname(temp)===os.tmpdir()&&path.basename(temp).startsWith('boo-call-provider-'));fs.rmSync(temp,{recursive:true,force:true});}
+ }finally{assert.ok(path.resolve(path.dirname(temp))===path.resolve(os.tmpdir())&&path.basename(temp).startsWith('boo-call-provider-'));fs.rmSync(temp,{recursive:true,force:true});}
 }
 if(require.main===module)run().catch(error=>{console.error(error);process.exitCode=1;});
 module.exports={run};

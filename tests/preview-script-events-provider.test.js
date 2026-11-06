@@ -26,7 +26,7 @@ async function fixture(options={}){
  host.sessions=new Map([[session.key,session]]);await host.postModel(session);
  return {temp,primaryPath,externalPath,document,workspace,host,session,messages,effects,
    revision:()=>session.publishedPreview.revision,
-   dispose(){assert.ok(path.dirname(temp)===os.tmpdir()&&path.basename(temp).startsWith('boo-external-events-'));fs.rmSync(temp,{recursive:true,force:true});}};
+   dispose(){assert.ok(path.resolve(path.dirname(temp))===path.resolve(os.tmpdir())&&path.basename(temp).startsWith('boo-external-events-'));fs.rmSync(temp,{recursive:true,force:true});}};
 }
 async function run(){
  const f=await fixture();

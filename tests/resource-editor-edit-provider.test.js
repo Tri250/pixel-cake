@@ -177,7 +177,7 @@ async function main() {
       assert.deepEqual(options.filters,{PAK:['pak']});assert.ok(options.defaultUri.fsPath.endsWith('-edited.pak'));return vscode.Uri.file(gomTarget);
     };
     await send(gomEntry,'saveAs');assert.equal(gomEntry.indexUnavailable,false);assert.equal(gomEntry.editInfo.dirty,false);
-    assert.equal(gomEntry.summary.pakPath,gomTarget);assert.equal(state(gomEntry).name,'new.pak');assert.equal(digest(gomSource),gomHash);
+    assert.equal(fs.realpathSync(gomEntry.summary.pakPath), fs.realpathSync(gomTarget)); assert.equal(state(gomEntry).name,'new.pak'); assert.equal(digest(gomSource),gomHash);
     assert.ok((await archive.readArchiveImagePng({extensionPath:runtimeRoot,indexRoot,archiveId:gomEntry.summary.archiveId,imageIndex:14})).length);
     await send(gomEntry,'endEdit');
     const oldGom=await open(gomFixture(path.join(root,'old.pak'),{variant:1}));assert.equal(state(oldGom).canStartEdit,false);

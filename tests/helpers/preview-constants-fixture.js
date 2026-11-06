@@ -34,6 +34,6 @@ async function createFixture(){
  host.sessions=new Map([[session.key,session]]);await host.postModel(session);
  return{temp,primaryPath,definesPath,primary,host,session,workspace,events,edits,text:()=>text,saves:()=>saves,
   source,definitions,uri,async reparse(next){const document={...primary,getText:()=>next};return host.createModel(document,next.indexOf('[@main]'),undefined,{},{});},
-  cleanup(){assert.ok(path.dirname(temp)===os.tmpdir()&&path.basename(temp).startsWith('boo-constants-gate-'));fs.rmSync(temp,{recursive:true,force:true});}};
+  cleanup(){assert.ok(path.resolve(path.dirname(temp))===path.resolve(os.tmpdir())&&path.basename(temp).startsWith('boo-constants-gate-'));fs.rmSync(temp,{recursive:true,force:true});}};
 }
 module.exports={createFixture,runtime,source,definitions};

@@ -89,33 +89,38 @@ try {
 
   # ---- 2. 生成 IExpress SED（向导风格分节；全部 ASCII）----
   # 路径加引号：检出目录或临时目录含空格时 iexpress 仍能正确解析。
+  # 注意：IExpress 的 SED 解析器要求 CRLF 行尾；源码以 LF 检出时 here-string
+  # 直接写出会生成 LF-only 的 SED，iexpress 静默失败（退出码 1，无任何输出）。
   $sedPath = Join-Path $stageRoot 'boo-setup.sed'
-  $sed = @"
-[Version]
-Class=IEXPRESS
-SEDVersion=1
-
-[Options]
-PackagePurpose=InstallApp
-ShowInstallProgramWindow=0
-HideInstallProgramWindow=1
-AppLaunched=cmd /c install-boo.cmd
-PostInstallCmd=<None>
-AdminQuietInstCmd=<None>
-UserQuietInstCmd=<None>
-TargetName="$OutPath"
-FriendlyName=BOO Visual Editor Setup
-SourceFiles0="$srcDir\"
-
-[SourceFiles]
-SourceFiles0="$srcDir\%"
-
-[SourceFiles0]
-%FILE0%=$vsixName
-%FILE1%=install-boo.cmd
-%FILE2%=install-boo.ps1
-"@
-  Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
+  $sedLines = @(
+    '[Version]',
+    'Class=IEXPRESS',
+    'SEDVersion=1',
+    '',
+    '[Options]',
+    'PackagePurpose=InstallApp',
+    'ShowInstallProgramWindow=0',
+    'HideInstallProgramWindow=1',
+    'AppLaunched=cmd /c install-boo.cmd',
+    'PostInstallCmd=<None>',
+    'AdminQuietInstCmd=<None>',
+    'UserQuietInstCmd=<None>',
+    "TargetName=`"$OutPath`"",
+    'FriendlyName=BOO Visual Editor Setup',
+    "SourceFiles0=`"$srcDir\`"",
+    '',
+    '[SourceFiles]',
+    "SourceFiles0=`"$srcDir\%`"",
+    '',
+    '[SourceFiles0]',
+    "%FILE0%=$vsixName",
+    '%FILE1%=install-boo.cmd',
+    '%FILE2%=install-boo.ps1'
+  )
+  [System.IO.File]::WriteAllText(
+    $sedPath,
+    (($sedLines -join "`r`n") + "`r`n"),
+    [System.Text.Encoding]::ASCII)
 
   $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\iexpress.exe' } else { $null }
   if (-not $iexpress -or -not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {

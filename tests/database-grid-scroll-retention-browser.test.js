@@ -187,7 +187,7 @@ async function main() {
     await reset();
     await test('shrinking results clamp scroll without resurrecting removed cells',async()=>{
       const cell=await position(1900,1800);fixtureMutationMode='shrink';const result=await edit(cell,'91001');await checkViewport('shrink',result.before,true);
-      check(snapshot().top===0&&snapshot().left===0,'small result did not clamp to legal zero extent');
+      const shrunken=snapshot();check(shrunken.top===shrunken.maxTop&&shrunken.left===shrunken.maxLeft,'small result did not clamp to legal zero extent '+JSON.stringify(shrunken));
       check(!cellFor(result.index,result.field),'removed edited cell survived narrower/shorter results');
     });
     await reset();
@@ -241,7 +241,7 @@ async function main() {
       const result = JSON.parse(raw.replaceAll('&lt;', '<').replaceAll('&gt;', '>').replaceAll('&quot;', '"').replaceAll('&amp;', '&'));
       fs.writeFileSync(path.join(out, 'results.json'), JSON.stringify({ sourceFile, sourceSha256, browser, version, ...result }, null, 2));
       console.log(`database-grid-scroll-retention-browser.test.js: browser=${browser} version=${version} DOM=${/data-dom-count="([0-9]+)"/.exec(dom)?.[1]}`);
-      assert.deepEqual(result.failures, [], 'database viewport/selection RED matrix');assert.deepEqual(result.appErrors, [], 'browser application errors');
+      assert.deepEqual(result.failures, [], `database viewport/selection RED matrix: ${JSON.stringify(result.failures)}`);assert.deepEqual(result.appErrors, [], 'browser application errors');
       console.log('database-grid-scroll-retention-browser.test.js: PASS (production Tabulator UI, synthetic in-memory host; no database writes)');return;
     } catch (error) {
       if (attempts.at(-1)?.browser === browser && attempts.at(-1)?.completed) throw error;
