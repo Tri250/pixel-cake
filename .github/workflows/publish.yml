@@ -197,10 +197,12 @@ jobs:
           $sedPath = Join-Path $env:RUNNER_TEMP 'setup.sed'
 
           # IExpress SED：自解压并静默执行 code --install-extension（code CLI 不在 PATH 时仅解压不报错阻断）
+          # 采用向导生成风格：节之间保留空行，文件清单为 "%FILE0%=文件名" 形式。
           $sed = @"
           [Version]
           Class=IEXPRESS
           SEDVersion=1
+
           [Options]
           PackagePurpose=InstallApp
           ShowInstallProgramWindow=0
@@ -210,25 +212,43 @@ jobs:
           AdminQuietInstCmd=<None>
           UserQuietInstCmd=<None>
           TargetName=$exePath
+          FriendlyName=BOO Visual Editor Setup
           SourceFiles0=$srcDir\
+
           [SourceFiles]
           SourceFiles0=$srcDir\%
+
           [SourceFiles0]
           %FILE0%=$vsixName
           "@
 
           Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
 
-          # iexpress.exe 会异步派生子进程完成打包后立即返回（$LASTEXITCODE 不可靠），
-          # 因此不依赖其退出码，改为轮询等待产物 EXE 生成。
-          Start-Process -FilePath 'iexpress.exe' -ArgumentList "/N /Q `"$sedPath`"" -WindowStyle Hidden | Out-Null
+          if (-not (Test-Path "$env:SystemRoot\System32\iexpress.exe")) {
+            throw "iexpress.exe not found at $env:SystemRoot\System32\iexpress.exe"
+          }
 
-          $deadline = (Get-Date).AddSeconds(180)
-          while (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-            if ((Get-Date) -gt $deadline) {
-              throw "Windows EXE installer was not created within 180s: $exePath"
-            }
-            Start-Sleep -Seconds 2
+          # 同步运行 iexpress 并记录退出码（/Q 静默模式下失败无输出，退出码是唯一线索）。
+          $proc = Start-Process -FilePath "$env:SystemRoot\System32\iexpress.exe" `
+            -ArgumentList "/N /Q `"$sedPath`"" -WindowStyle Hidden -PassThru -Wait
+          Write-Host "iexpress exit code: $($proc.ExitCode)"
+
+          # 产物落点兜底：iexpress 可能将 EXE 写入当前目录或 SED 所在目录之外的路径。
+          $found = Get-ChildItem -Path $env:RUNNER_TEMP, $env:GITHUB_WORKSPACE -Recurse `
+            -Filter "*-Setup-Windows.exe" -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf) -and $found) {
+            Write-Host "EXE found at $($found.FullName), moving to $exePath"
+            Move-Item -LiteralPath $found.FullName -Destination $exePath -Force
+          }
+
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            Write-Host "=== SED content (for diagnosis) ==="
+            Get-Content -LiteralPath $sedPath | Write-Host
+            Write-Host "=== EXE files under RUNNER_TEMP (for diagnosis) ==="
+            Get-ChildItem -Path $env:RUNNER_TEMP -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+              ForEach-Object { Write-Host $_.FullName }
+            throw "Windows EXE installer was not created: $exePath (iexpress exit code: $($proc.ExitCode))"
           }
           # 等待文件写入完成（大小稳定）
           $lastSize = -1
