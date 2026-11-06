@@ -24,7 +24,7 @@ function version(executable) {
   return result.status === 0 ? result.stdout.trim() : 'unavailable';
 }
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-preview-excel-browser-'));
+const temporary = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-preview-excel-browser-'));
 const resolver = new ScriptDataResolver();
 try {
   const envir = path.join(temporary, 'Mir200', 'Envir');
@@ -177,7 +177,7 @@ try {
   assert.ok(fs.readFileSync(workbookFile).equals(workbookBytes), 'browser preview must not alter the source workbook');
 } finally {
   resolver.dispose();
-  assert.equal(path.dirname(path.resolve(temporary)), path.resolve(os.tmpdir()));
+  assert.equal(path.dirname(path.resolve(temporary)), fs.realpathSync(path.resolve(os.tmpdir())));
   assert.ok(path.basename(temporary).startsWith('boo-preview-excel-browser-'));
   removeTemporaryDirectory(temporary);
 }

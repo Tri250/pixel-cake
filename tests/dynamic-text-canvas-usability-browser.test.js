@@ -173,7 +173,7 @@ function runBrowserMatrix() {
     return [];
   }
 
-  const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-dynamic-text-usability-'));
+  const temporary = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-dynamic-text-usability-'));
   try {
     const harness = path.join(temporary, 'dynamic-text-canvas-usability.html');
     let html = fs.readFileSync(path.join(RUNTIME_ROOT, 'media', 'npc-dialog-visual.html'), 'utf8')

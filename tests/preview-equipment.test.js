@@ -31,7 +31,7 @@ async function main() {
   const threshold=source.replace('#if(1)','#if(2)').replace('checkitemw 泰阿','CHECKITEMW 头盔');
   assert.equal(parse(threshold,{'WORN(金刚)':'1'},'GOM',{dataOptions}).conditionGroups[0].satisfied,false);
   assert.equal(parse(threshold,{'WORN(金刚)':'1','WORN(头盔)':'1'},'GOM',{dataOptions}).conditionGroups[0].satisfied,true);
-  const temp=fs.mkdtempSync(path.join(os.tmpdir(),'boo-equipment-'));
+  const temp=fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()),'boo-equipment-'));
   const r=new ScriptDataResolver();
   try {
     const file=path.join(temp,'Mir200/Envir/Market_Def/test.txt'),db=path.join(temp,'MUD2/db/items.db'),setup=path.join(temp,'Mir200/!Setup.txt');

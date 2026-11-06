@@ -38,7 +38,7 @@ const csv = [
   '3,4,70,30,300000,,150,90,3,200,120,4',
 ].join('\r\n');
 function fixture() {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-rebirth-csv-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-rebirth-csv-'));
   const file = path.join(temp, 'Mir200/Envir/Market_Def/1大陆/主城/07转生系统-西岐.txt');
   const table = path.join(temp, 'Mir200/Envir/QuestDiary/03游戏名单/表格数据/转生系统.csv');
   fs.mkdirSync(path.dirname(file), { recursive: true }); fs.mkdirSync(path.dirname(table), { recursive: true });
@@ -46,7 +46,7 @@ function fixture() {
   fs.writeFileSync(file, sourceBytes); fs.writeFileSync(table, tableBytes);
   return { temp, file, table, source, sourceBytes, tableBytes,
     unchanged() { assert.deepEqual(fs.readFileSync(file), sourceBytes); assert.deepEqual(fs.readFileSync(table), tableBytes); },
-    dispose() { assert.equal(path.dirname(temp), path.resolve(os.tmpdir())); assert.ok(path.basename(temp).startsWith('boo-rebirth-csv-')); removeTemporaryDirectory(temp); },
+    dispose() { assert.equal(path.dirname(temp), fs.realpathSync(path.resolve(os.tmpdir()))); assert.ok(path.basename(temp).startsWith('boo-rebirth-csv-')); removeTemporaryDirectory(temp); },
   };
 }
 const expectedOne = ['1转　→　2转', '对怪切割+50', '对人真伤+30', '神力倍攻+1%',

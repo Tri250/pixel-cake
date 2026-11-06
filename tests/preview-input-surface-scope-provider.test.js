@@ -41,7 +41,7 @@ function loadManager(errors, workspaceOverrides = {}) {
 }
 
 async function testRealQuestDiaryProviderScope() {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-surface-scope-provider-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-surface-scope-provider-'));
   try {
     const externalPath = path.join(temp, 'Envir', 'QuestDiary', 'property.txt');
     const primaryPath = path.join(temp, 'main.txt');

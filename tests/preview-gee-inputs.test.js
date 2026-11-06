@@ -65,7 +65,7 @@ const source = [
 ].join('\n');
 
 async function fixture(extraItems = []) {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-gee-inputs-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-gee-inputs-'));
   const resolver = new ScriptDataResolver();
   try {
     const file = path.join(temp, 'Mir200/Envir/Market_Def/神器.txt');

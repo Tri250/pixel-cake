@@ -14,7 +14,7 @@ function book(value, options = {}) {
 }
 
 function run() {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-preview-excel-provider-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-preview-excel-provider-'));
   const envir = path.join(temp, 'Mir200', 'Envir');
   const market = path.join(envir, 'Market_Def');
   const diary = path.join(envir, 'QuestDiary');
@@ -97,7 +97,7 @@ function run() {
   } finally {
     resolver.dispose();
     // Remove only this test-owned, exact mkdtemp directory, never a workspace.
-    assert.equal(path.dirname(path.resolve(temp)), path.resolve(os.tmpdir()));
+    assert.equal(path.dirname(path.resolve(temp)), fs.realpathSync(path.resolve(os.tmpdir())));
     assert.ok(path.basename(temp).startsWith('boo-preview-excel-provider-'));
     fs.rmSync(temp, { recursive: true, force: true });
   }

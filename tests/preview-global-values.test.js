@@ -23,7 +23,7 @@ const globalModel = (values = {}) => parse(globalSource, values, 'GOM', {
 });
 
 function run() {
-  const temp = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-global-values-'));
+  const temp = fs.mkdtempSync(path.join(fs.realpathSync(os.tmpdir()), 'boo-global-values-'));
   const resolver = new ScriptDataResolver();
   try {
     const source = path.join(temp, 'Mir200', 'Envir', 'Market_Def', '神器.txt');
