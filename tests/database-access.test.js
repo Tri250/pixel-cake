@@ -17,13 +17,22 @@ function sha256(filePath) {
 }
 
 function fixtureCommand(runtime, filePath, action = 'create') {
-  const result = spawnSync(runtime.exe, [
-    '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
-    '-File', helperPath, '-FilePath', filePath, '-Provider', runtime.provider, '-Action', action,
-  ], { encoding: 'utf8', windowsHide: true, timeout: 30000 });
-  if (result.error) throw result.error;
-  assert.equal(result.status, 0, `Synthetic Access fixture failed: ${result.stderr || result.stdout}`);
-  return JSON.parse(result.stdout.replace(/^\uFEFF/, '').trim());
+  // CI 冷启动或杀毒扫描可能让 32 位 PowerShell 首次启动超过单次等待上限；
+  // 仅对 spawn 层错误（超时/无法启动）重试，脚本真实失败（status != 0）不重试。
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    const result = spawnSync(runtime.exe, [
+      '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass',
+      '-File', helperPath, '-FilePath', filePath, '-Provider', runtime.provider, '-Action', action,
+    ], { encoding: 'utf8', windowsHide: true, timeout: 120000 });
+    if (!result.error) {
+      assert.equal(result.status, 0, `Synthetic Access fixture failed: ${result.stderr || result.stdout}`);
+      return JSON.parse(result.stdout.replace(/^\uFEFF/, '').trim());
+    }
+    lastError = result.error;
+    console.log(`database-access.test.js: fixture attempt ${attempt} failed (${result.error.code || result.error.message}); retrying`);
+  }
+  throw lastError;
 }
 
 function chooseRuntime(tempDir) {
@@ -292,7 +301,7 @@ function tamperedCandidate(tempDir, runtime) {
   const result = spawnSync(runtime.exe, [
     '-NoLogo', '-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', bridge, '-Provider', provider,
   ], {
-    encoding: 'utf8', windowsHide: true, timeout: 30000,
+    encoding: 'utf8', windowsHide: true, timeout: 120000,
     input: JSON.stringify({ action: 'replace', sourcePath: filePath, candidatePath,
       expectedSha256: sourceHash, expectedCandidateSha256: verifiedCandidateHash, backupPath }),
   });

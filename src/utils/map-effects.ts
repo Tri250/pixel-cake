@@ -483,6 +483,11 @@ function resolveStaticCallPath(
     lexicalRoot = context.questDiaryRealPath;
     realRoot = context.questDiaryRealPath;
     questDiaryScoped = true;
+  } else {
+    // Plain relative calls resolve from the caller's directory. sourceFile is
+    // always a realpath, so the lexical root must be canonicalized too, or the
+    // containment check breaks across symlinked tmpdirs (macOS /var → /private/var).
+    lexicalRoot = context.envirRealPath;
   }
 
   if (!path.posix.extname(normalized)) normalized += '.txt';
