@@ -33,6 +33,10 @@ function fixture(file,options={}) {
 }
 function code(fn,expected){assert.throws(fn,e=>e.code===expected,expected);}
 async function main(){
+ if(process.platform!=='win32'){
+  console.log('resource-editor-pair.test.js: SKIP (PAIR atomic new-directory save requires Windows)');
+  return;
+ }
  const root=fs.mkdtempSync(path.join(os.tmpdir(),'boo-pair-edit-')),sessions=[];
  const open=file=>{const s=PairEditSession.open({extensionPath:runtime,sourcePath:file});sessions.push(s);return s;};let groups=0;
  try{

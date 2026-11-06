@@ -197,20 +197,17 @@ export function activate(context: vscode.ExtensionContext) {
   );
 
   // 工作区自动设置 GB2312 编码（传奇脚本默认编码）
-  const wsRoot = vscode.workspace.workspaceFolders?.[0]?.uri.fsPath;
-  if (wsRoot) {
-    const vscodeDir = path.join(wsRoot, '.vscode');
-    const settingsFile = path.join(vscodeDir, 'settings.json');
-    let settings: Record<string, unknown> = {};
-    if (fs.existsSync(settingsFile)) {
-      try { settings = JSON.parse(fs.readFileSync(settingsFile, 'utf-8')); } catch { /* ignore */ }
-    }
-    if (settings['files.encoding'] !== 'gb2312') {
-      settings['files.encoding'] = 'gb2312';
-      try {
-        fs.mkdirSync(vscodeDir, { recursive: true });
-        fs.writeFileSync(settingsFile, JSON.stringify(settings, null, 2), 'utf-8');
-      } catch { /* ignore */ }
+  // 通过 Configuration API 写入：保留 .vscode/settings.json 的 JSONC 注释与尾逗号，
+  // 避免 JSON.parse + 重写破坏用户原有格式或外部修改。
+  const wsFolder = vscode.workspace.workspaceFolders?.[0];
+  if (wsFolder) {
+    const encoding = vscode.workspace.getConfiguration('files', wsFolder.uri).get<string>('encoding');
+    if (encoding !== 'gb2312') {
+      void vscode.workspace.getConfiguration('files', wsFolder.uri)
+        .update('encoding', 'gb2312', vscode.ConfigurationTarget.Workspace)
+        .then(undefined, (error: unknown) => {
+          console.warn('[BOO] 无法写入工作区编码设置:', error instanceof Error ? error.message : String(error));
+        });
     }
   }
   try { activateReload(context); } catch (e) { console.warn('[BOO] M2重载激活失败:', e instanceof Error ? e.message : String(e)); }

@@ -10,6 +10,9 @@ const DOC_SELECTOR: vscode.DocumentSelector = [
 export function registerCodeLensProvider(context: vscode.ExtensionContext): void {
   const provider = vscode.languages.registerCodeLensProvider(DOC_SELECTOR, {
     provideCodeLenses(document) {
+      if (!vscode.workspace.getConfiguration('boo', document.uri).get('enableCodeLens', true)) {
+        return [];
+      }
       const lenses: vscode.CodeLens[] = [];
       const allText = document.getText();
       const referenceCounts = new Map<string, number>();

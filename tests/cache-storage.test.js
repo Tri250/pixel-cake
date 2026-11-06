@@ -59,7 +59,10 @@ function main() {
       'boo1213.boo-ngom-editor'
     );
     const context = { globalStorageUri: { fsPath: globalStorage } };
-    const env = { LOCALAPPDATA: local, APPDATA: roaming };
+    // Windows 用 LOCALAPPDATA/APPDATA；POSIX 缓存根由 XDG_CACHE_HOME 决定，按平台注入对应变量。
+    const env = process.platform === 'win32'
+      ? { LOCALAPPDATA: local, APPDATA: roaming }
+      : { XDG_CACHE_HOME: local, APPDATA: roaming };
     const legacyPatchCache = path.join(globalStorage, 'patch-cache');
     const legacyPakCache = path.join(globalStorage, 'pak-cache');
     const pakPath = path.join(root, 'client', 'data', 'Items.pak');

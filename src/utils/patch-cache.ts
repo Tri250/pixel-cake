@@ -647,7 +647,7 @@ export function findMissingEffectImageArchives(
     if (seen.has(key) || found) return false;
     seen.add(key);
     return true;
-  }).map(rawName => path.basename(rawName.trim().replace(/[\\/]+/g, path.sep)));
+  }).map(rawName => path.basename(rawName.trim().replace(/[\\/]+/g, '/')));
 }
 
 export function findNearbyPakPasswordFile(dataDirectory: string): string | undefined {
@@ -938,7 +938,9 @@ interface ArchiveReference {
 }
 
 function parseArchiveReference(value: string): ArchiveReference | undefined {
-  const configuredName = String(value || '').trim().replace(/[\\/]+/g, path.sep);
+  // 配置引用来自 Windows 客户端文件（如 EffectImageList.txt）：反斜杠为分隔符，
+  // 归一为正斜杠后 basename/extname 在 Windows 与 POSIX 上结果一致。
+  const configuredName = String(value || '').trim().replace(/[\\/]+/g, '/');
   const name = normalizePakName(configuredName);
   if (!name) return undefined;
   return { name, extension: archiveExtension(configuredName) };

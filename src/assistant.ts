@@ -23,7 +23,7 @@ import {
   isPathInside,
   resolveScriptPathReference,
 } from './utils/path';
-import { decodeTextFile, readFileGBK } from './utils/text';
+import { decodeTextFile, encodeTextFile, readFileGBK } from './utils/text';
 import {
   findAutoRunRobotLabelAt,
   findScriptLabelInFirstAvailableCandidate,
@@ -852,6 +852,17 @@ export function activateAssistant(context: vscode.ExtensionContext) {
         // 去重：防止同一 label 被多个代码路径重复添加导致 detail 丢失
         const addedLabels = new Set<string>();
 
+        // 按 boo.completionCase 配置决定插入命令的大小写（默认大写）
+        const completionCase = vscode.workspace.getConfiguration('boo')
+          .get<'lowercase' | 'uppercase' | 'capitalize'>('completionCase', 'uppercase');
+        function applyCompletionCase(name: string): string {
+          if (completionCase === 'lowercase') return name.toLowerCase();
+          if (completionCase === 'capitalize') {
+            return name.charAt(0).toUpperCase() + name.slice(1).toLowerCase();
+          }
+          return name.toUpperCase();
+        }
+
         // 构建命令补全的辅助函数
         function addCmdItem(cmd: IndexedCommand, prefix: string, detailPrefix: string, sortPrefix: string) {
           const upperName = cmd.name.toUpperCase();
@@ -863,13 +874,14 @@ export function activateAssistant(context: vscode.ExtensionContext) {
             : (!currentWord || upperName.startsWith(currentWord));
           if (matchesSearch && !addedLabels.has(prefix.toUpperCase() + upperName)) {
             addedLabels.add(prefix.toUpperCase() + upperName);
-            const item = new vscode.CompletionItem({ label: prefix + cmd.name, description: cmd.description || '' }, vscode.CompletionItemKind.Function);
+            const displayName = applyCompletionCase(prefix + cmd.name);
+            const item = new vscode.CompletionItem({ label: displayName, description: cmd.description || '' }, vscode.CompletionItemKind.Function);
             const engineLabel = formatIndexedCommandEngineCategory(cmd);
             const aliasLabel = cmd.aliasOf ? `，兼容别名：${cmd.aliasOf}` : '';
             const verificationLabel = cmd.completionVerified ? '' : ' [仅指令名]';
             item.detail = `${detailPrefix}${verificationLabel} [${engineLabel}] ${cmd.description || ''}${aliasLabel}`;
             const documentation = new vscode.MarkdownString();
-            documentation.appendMarkdown(`**${cmd.completionVerified ? cmd.syntax : prefix + cmd.name}**\n\n${cmd.description || ''}\n\n`);
+            documentation.appendMarkdown(`**${cmd.completionVerified ? cmd.syntax : displayName}**\n\n${cmd.description || ''}\n\n`);
             if (!cmd.completionVerified) {
               documentation.appendMarkdown('仅提供已确认的指令名，不自动插入尚未完整核验的参数。\n\n');
             }
@@ -878,8 +890,8 @@ export function activateAssistant(context: vscode.ExtensionContext) {
             item.insertText = cmd.completionVerified
               ? (cmd.snippet
                   ? new vscode.SnippetString(cmd.snippet)
-                  : buildSnippet({ ...cmd, name: prefix + cmd.name }))
-              : new vscode.SnippetString(prefix + cmd.name);
+                  : buildSnippet({ ...cmd, name: displayName }))
+              : new vscode.SnippetString(displayName);
             item.range = commandReplaceRange;
             item.sortText = chineseCommandSearch
               ? `${sortPrefix}${String(chineseSearchScore).padStart(2, '0')}${cmd.name}`
@@ -2054,7 +2066,14 @@ export function activateAssistant(context: vscode.ExtensionContext) {
     const linesToCheck = allLines.length > MAX_DIAG_LINES
       ? allLines.slice(0, MAX_DIAG_LINES)
       : allLines;
-    const diagnostics = computeDiagnostics(linesToCheck, uri);
+    const severityMode = vscode.workspace.getConfiguration('boo', uri)
+      .get<'strict' | 'normal' | 'relaxed'>('diagnosticSeverity', 'normal');
+    let diagnostics = computeDiagnostics(linesToCheck, uri);
+    if (severityMode === 'relaxed') {
+      diagnostics = diagnostics.filter(item => item.severity === vscode.DiagnosticSeverity.Error);
+    } else if (severityMode === 'normal') {
+      diagnostics = diagnostics.filter(item => item.severity !== vscode.DiagnosticSeverity.Information);
+    }
     if (allLines.length > MAX_DIAG_LINES) {
       diagnostics.push(new vscode.Diagnostic(
         new vscode.Range(MAX_DIAG_LINES, 0, MAX_DIAG_LINES, 0),
@@ -2851,13 +2870,15 @@ tr:hover{background:#2a2a2a}
   // 注册「添加标签到当前文件」命令（创建后跳转）
   context.subscriptions.push(
     vscode.commands.registerCommand('boo.addLabelToCurrentFile', async (docUri: vscode.Uri, label: string) => {
-      const editor = vscode.window.activeTextEditor;
-      if (!editor) {
-        const doc = await vscode.workspace.openTextDocument(docUri);
-        await vscode.window.showTextDocument(doc);
-        // editor可能仍为null如果文档未激活，通过WorkspaceEdit插入
+      // ST-04：必须写入命令所针对的文档；活动编辑器此时可能已是另一个文档。
+      let activeEditor = docUri
+        ? vscode.window.visibleTextEditors.find(candidate => candidate.document.uri.toString() === docUri.toString())
+        : vscode.window.activeTextEditor;
+      if (!activeEditor && docUri) {
+        activeEditor = await vscode.window.showTextDocument(
+          await vscode.workspace.openTextDocument(docUri), { preview: false }
+        );
       }
-      const activeEditor = vscode.window.activeTextEditor;
       if (!activeEditor) return;
       const insertText = `\n[@${label}]\n#IF\n#ACT\n`;
       const insertPos = new vscode.Position(activeEditor.document.lineCount, 0);
@@ -2875,16 +2896,24 @@ tr:hover{background:#2a2a2a}
     vscode.commands.registerCommand('boo.addLabelToFile', async (_docUri: vscode.Uri, targetFile: string, targetLabel: string) => {
       const found = targetFile; // 直接使用完整路径（诊断时已解析）
       try {
-        const raw = fs.readFileSync(found);
-        const text = readFileGBK(raw);
-        const insert = `\n[@${targetLabel}]\n#IF\n#ACT\n`;
-        const newText = text + insert;
-        const iconv = require('iconv-lite');
-        const gbkBuf = iconv.encode(newText, 'gbk');
-        fs.writeFileSync(found, Buffer.from(gbkBuf));
-        // 打开目标文件并跳转到新添加的标签处
         const uri = vscode.Uri.file(found);
-        const doc = await vscode.workspace.openTextDocument(uri);
+        const insert = `\n[@${targetLabel}]\n#IF\n#ACT\n`;
+        const existingDoc = vscode.workspace.textDocuments.find(doc => doc.uri.toString() === uri.toString());
+        if (existingDoc) {
+          // ST-03：文档已在编辑器中打开时走编辑器写入，保留草稿缓冲与撤销栈，
+          // 避免磁盘写入与编辑器缓冲不一致。
+          const openEditor = await vscode.window.showTextDocument(existingDoc, { preview: false });
+          const insertPos = new vscode.Position(openEditor.document.lineCount, 0);
+          const applied = await openEditor.edit(builder => builder.insert(insertPos, insert));
+          if (!applied) throw new Error('文档为只读或暂不可编辑，未写入标签');
+        } else {
+          // ST-03：按文件实际编码追加，不再把整文件强制重编码为 GBK，
+          // 避免 UTF-8 主体被破坏成乱码。
+          const { text, encoding } = decodeTextFile(fs.readFileSync(found));
+          fs.writeFileSync(found, encodeTextFile(text + insert, encoding));
+        }
+        // 打开目标文件并跳转到新添加的标签处
+        const doc = existingDoc || await vscode.workspace.openTextDocument(uri);
         const editor = await vscode.window.showTextDocument(doc);
         // 查找 [@标签] 位置并跳转
         const allText = doc.getText();
@@ -3636,22 +3665,22 @@ el.textContent=e.data.text||'扫描完成';
       let snippet = '';
       switch (pick.value) {
         case 'npc':
-          snippet = "[@main]\n#SAY\n<{1:欢迎光临}/FColor=251>\\\n<{2:点击进入}/@enter>\\\n<{3:关闭}/@exit>\n\n#ACT\nGOTO @checkLevel\n\n[@enter]\n#IF\nCHECKLEVELEX > {4:50}\n#ACT\nMAPMOVE {5:D717} {6:100} {7:100}\nSENDMSG 5 你被传送到了新地图！\nBREAK\n#ELSEACT\nMESSAGEBOX 需要等级{4:50}以上才能进入！";
+          snippet = "[@main]\n#SAY\n<${1:欢迎光临}/FColor=251>\\\n<${2:点击进入}/@enter>\\\n<${3:关闭}/@exit>\n\n#ACT\nGOTO @checkLevel\n\n[@enter]\n#IF\nCHECKLEVELEX > ${4:50}\n#ACT\nMAPMOVE ${5:D717} ${6:100} ${7:100}\nSENDMSG 5 你被传送到了新地图！\nBREAK\n#ELSEACT\nMESSAGEBOX 需要等级${4:50}以上才能进入！";
           break;
         case 'check':
-          snippet = "#IF\nCHECKLEVELEX > {1:50}\nCHECKGAMEGOLD > {2:1000}\n#ACT\nGAMEGOLD - {2:1000}\nGIVE {3:物品名} {4:1}\nSENDMSG 6 兑换成功！\n#ELSEACT\nMESSAGEBOX 条件不足！";
+          snippet = "#IF\nCHECKLEVELEX > ${1:50}\nCHECKGAMEGOLD > ${2:1000}\n#ACT\nGAMEGOLD - ${2:1000}\nGIVE ${3:物品名} ${4:1}\nSENDMSG 6 兑换成功！\n#ELSEACT\nMESSAGEBOX 条件不足！";
           break;
         case 'exchange':
-          snippet = "[@exchange]\n#IF\nCHECKITEM {1:物品名} {2:1}\n#ACT\nTAKE {1:物品名} {2:1}\nGIVE {3:奖励物品} {4:1}\nSENDMSG 6 兑换成功！\n#ELSEACT\nMESSAGEBOX 你没有{1:物品名}！";
+          snippet = "[@exchange]\n#IF\nCHECKITEM ${1:物品名} ${2:1}\n#ACT\nTAKE ${1:物品名} ${2:1}\nGIVE ${3:奖励物品} ${4:1}\nSENDMSG 6 兑换成功！\n#ELSEACT\nMESSAGEBOX 你没有${1:物品名}！";
           break;
         case 'levelup':
-          snippet = "[@levelup]\n#IF\nCHECKLEVELEX = {1:100}\n#ACT\nGIVE {2:奖励物品} {3:1}\nSENDMSG 0 恭喜<$USERNAME>达到{1:100}级,获得奖励{2:奖励物品}！\nBREAK";
+          snippet = "[@levelup]\n#IF\nCHECKLEVELEX = ${1:100}\n#ACT\nGIVE ${2:奖励物品} ${3:1}\nSENDMSG 0 恭喜<$USERNAME>达到${1:100}级,获得奖励${2:奖励物品}！\nBREAK";
           break;
         case 'call':
-          snippet = "#CALL [\\\\{1:文件夹}\\\\{2:文件名}.txt] @{3:标签}";
+          snippet = "#CALL [\\\\${1:文件夹}\\\\${2:文件名}.txt] @${3:标签}";
           break;
         case 'var':
-          snippet = "#IF\n#ACT\nMOV {1:N\\$变量名} {2:0}\nINC {1:N\\$变量名} {3:1}\nSENDMSG 6 N\\$变量名 = <\\$STR({1:N\\$变量名})>";
+          snippet = "#IF\n#ACT\nMOV ${1:N\\$变量名} ${2:0}\nINC ${1:N\\$变量名} ${3:1}\nSENDMSG 6 N\\$变量名 = <\\$STR(${1:N\\$变量名})>";
           break;
       }
 

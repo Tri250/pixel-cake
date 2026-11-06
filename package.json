@@ -2,7 +2,7 @@
   "name": "boo-ngom-editor",
   "displayName": "BOO UI编辑器",
   "description": "面向传奇类游戏 GM 的 VS Code 开发工具，提供脚本智能提示、UI 可视化编辑、PAK/JPK 读取、数据库与地图查看及 M2 重载。",
-  "version": "4.4.1",
+  "version": "4.4.2",
   "publisher": "boo1213",
   "author": "boo1213",
   "license": "MIT",
@@ -14,8 +14,39 @@
   "bugs": {
     "url": "https://github.com/bootimeing/boo-ngom-editor/issues"
   },
+  "qna": "marketplace",
+  "galleryBanner": {
+    "color": "#1b1f27",
+    "theme": "dark"
+  },
   "engines": {
     "vscode": "^1.68.0"
+  },
+  "extensionKind": [
+    "ui"
+  ],
+  "capabilities": {
+    "untrustedWorkspaces": {
+      "supported": "limited",
+      "restrictedConfigurations": [
+        {
+          "properties": [
+            "boo.engine",
+            "boo.autoDetectEngine",
+            "boo.archivePreviewMode",
+            "boo.enableCompletion",
+            "boo.enableDiagnostics",
+            "boo.diagnosticSeverity",
+            "boo.enableCodeLens",
+            "boo.enableFolding",
+            "boo.enableFColor",
+            "boo.completionCase",
+            "boo.deepseek.host",
+            "boo.deepseek.port"
+          ]
+        }
+      ]
+    }
   },
   "categories": [
     "Programming Languages",
@@ -23,9 +54,22 @@
     "Themes",
     "Other"
   ],
-  "extensionPack": [
-    "MS-CEINTL.vscode-language-pack-zh-hans",
-    "vscode-icons-team.vscode-icons"
+  "keywords": [
+    "boo",
+    "ngom",
+    "gom",
+    "传奇",
+    "传奇引擎",
+    "脚本",
+    "UI编辑器",
+    "PAK",
+    "JPK",
+    "数据库",
+    "地图",
+    "M2",
+    "翎风",
+    "996PC",
+    "legend of mir"
   ],
   "icon": "resources/icon.png",
   "activationEvents": [
@@ -36,16 +80,60 @@
     "onView:boo.dbView",
     "onView:boo.mapPreviewView",
     "onView:boo.deepseekView",
-    "onCommand:boo.deepseek.openPanel",
-    "onCommand:boo.deepseek.openInBrowser",
-    "onCommand:boo.deepseek.startServer",
     "onCustomEditor:boo.tableEditor",
+    "onCustomEditor:boo.csvEditor",
     "onCustomEditor:boo.xlsEditor",
+    "onCommand:boo.resourceEditor.open",
+    "onCommand:boo.analyzeDropRates",
+    "onCommand:boo.openEditor",
+    "onCommand:boo.openNpcDialogVisualEditor",
+    "onCommand:boo.showStats",
+    "onCommand:boo.formatScript",
+    "onCommand:boo.showColorChart",
+    "onCommand:boo.showEquipSlots",
+    "onCommand:boo.showStdMode",
+    "onCommand:boo.quickColor",
+    "onCommand:boo.stringTransform",
+    "onCommand:boo.addVarDesc",
+    "onCommand:boo.addLineNote",
+    "onCommand:boo.clearLineNotes",
+    "onCommand:boo.toggleEngine",
+    "onCommand:boo.diagnoseAll",
+    "onCommand:boo.analyzeVariables",
+    "onCommand:boo.batchEditNumbers",
+    "onCommand:boo.showAnisSymbols",
+    "onCommand:boo.detectEncoding",
+    "onCommand:boo.openDatabase",
+    "onCommand:boo.openMapViewer",
+    "onCommand:boo.showMapInfo",
+    "onCommand:boo.insertTemplate",
+    "onCommand:boo.findUnusedLabels",
+    "onCommand:boo.toUpperCase",
+    "onCommand:boo.toUpperCaseAll",
+    "onCommand:boo.openCompletionEditor",
+    "onCommand:boo.autoLoadSettings",
+    "onCommand:boo.reloadM2",
+    "onCommand:boo.scanM2",
+    "onCommand:boo.quickFix",
+    "onCommand:boo.createMissingFile",
+    "onCommand:boo.createMonGenDropFiles",
+    "onCommand:boo.addLabelToFile",
+    "onCommand:boo.addLabelToCurrentFile",
+    "onCommand:boo.wrapVariable",
+    "onCommand:boo.wrapFColor250",
+    "onCommand:boo.retriggerPathComplete",
+    "onCommand:boo.cleanAllLogs",
+    "onCommand:boo.openFontSettings",
+    "onCommand:boo.addToClipboard",
+    "onCommand:boo.refreshVariables",
+    "onCommand:boo.openColorSettings",
     "onCommand:boo.syncToOtherZones",
     "onCommand:boo.openScriptSync",
-    "onCommand:boo.openNpcDialogVisualEditor",
-    "onCommand:boo.analyzeDropRates",
-    "onCommand:boo.resourceEditor.open"
+    "onCommand:boo.openQuickFiles",
+    "onCommand:boo.saveAll",
+    "onCommand:boo.deepseek.openPanel",
+    "onCommand:boo.deepseek.openInBrowser",
+    "onCommand:boo.deepseek.startServer"
   ],
   "main": "./out/extension.js",
   "contributes": {
@@ -749,13 +837,15 @@
     "normalize:engine-functions": "node tools/data-maintenance/normalize-engine-function-catalog.js",
     "watch": "tsc -watch -p ./",
     "package": "node tools/release/package-vsix.js",
+    "package:exe": "powershell -NoProfile -ExecutionPolicy Bypass -File tools/release/build-windows-installer.ps1",
     "lint": "eslint \"src/**/*.ts\"",
     "test:996pc": "npm run compile && node tests/engine-detect.test.js && node tests/engine-language-isolation.test.js && node tests/static-language.test.js && node tests/engine-help-data.test.js && node tests/server-language-audit.test.js && node tests/completion-search.test.js && node tests/script-labels.test.js && node tests/script-call-context.test.js && node tests/jpk-reader.test.js && node tests/pak-password.test.js && node tests/patch-cache.test.js && node tests/patch-manager.test.js && node tests/database-biff8.test.js && node tests/database-browser.test.js && node tests/item-image.test.js && node tests/minimap.test.js && node tests/m2-target.test.js && node tests/ui-codegen.test.js && node tests/ui-regressions.test.js",
     "test:map-middle-real": "npm run compile && node tests/map-middle-word-real-browser.test.js",
     "test:access": "npm run compile && node tests/database-access.test.js && node tests/database-access-browser.test.js && node tests/database-detail-fields-only-browser.test.js",
     "test:cache": "npm run compile && python -B tests/pak-geepak3-unicode.test.py && python -B tests/pak-geepak2-local.test.py && node tests/geepak3-unicode-global.test.js && node tests/gom-reader-tolerance.test.js && node tests/cache-storage.test.js && node tests/archive-index.test.js && node tests/geepak2-parser.test.js && node tests/wil-wzl-reader.test.js && node tests/original-map-wil-wzl.test.js && node tests/original-map-tile-cache.test.js && node tests/original-map-tile-resource-provider.test.js && node tests/map-preview-persistent-tile-provider.test.js && node tests/map-single-cell-provider.test.js && node tests/original-map-tile-browser.test.js && node tests/client-resources.test.js && node tests/patch-cache.test.js && node tests/pak-history.test.js && node tests/pak-password.test.js && node tests/pak-index.test.js && node tests/pak-format.test.js && node tests/jpk-reader.test.js && node tests/patch-manager.test.js && node tests/database-browser.test.js && node tests/database-detail.test.js && node tests/database-biff8.test.js && node tests/item-image.test.js && node tests/minimap.test.js && node tests/map-marker-state.test.js && node tests/map-entities.test.js && node tests/map-effects.test.js && node tests/map-effect-provider-real-sample.test.js && node tests/map-effect-real-sample.test.js && node tests/map-blend-real-sample.test.js && node tests/official-npc.test.js && node tests/map-preview-resource-roots.test.js && node tests/m2-target.test.js && node tests/ui-codegen.test.js && node tests/ui-regressions.test.js",
     "test:language": "npm run compile && node tests/completion-range.test.js && node tests/completion-search.test.js && node tests/command-arguments.test.js && node tests/map-variable-filter.test.js && node tests/document-symbols.test.js && node tests/script-labels.test.js && node tests/delayed-label-definition.test.js && node tests/script-call-context.test.js && node tests/robot-definition.test.js && node tests/script-path-reference.test.js && node tests/merchant-script-reference.test.js && node tests/map-config-links.test.js && node tests/mongen-drop-files.test.js && node tests/mongen-drop-command.test.js && node tests/script-audit-scope.test.js && node tests/script-static-arithmetic.test.js && node tests/variable-source-flow.test.js && node tests/variable-source-flow-branches.test.js && node tests/variable-branch-oracle.test.js && node tests/variable-source-flow-safety.test.js && node tests/statistics-table-data.test.js && node tests/variable-statistics.test.js && node tests/variable-list.test.js && node tests/variable-list-provider.test.js && node tests/variable-utag-flags.test.js && node tests/variable-candidate-command.test.js && node tests/variable-candidates.test.js && node tests/nested-variable-analysis.test.js && node tests/personal-flag-analysis.test.js && node tests/dynamic-reference.test.js && node tests/variable-wrap.test.js && node tests/custom-language.test.js && node tests/command-index.test.js && node tests/semantic-commands.test.js && node tests/engine-language-isolation.test.js && node tests/static-language.test.js && node tests/engine-detect.test.js && node tests/engine-help-data.test.js && node tests/final-engine-language-catalog.test.js && node tests/server-language-audit.test.js && node tests/table-configs.test.js && node tests/item-desc-preview.test.js && node tests/xls-table.test.js && node tests/original-map.test.js && node tests/help-command-coverage.test.js && node tests/help-command-apply.test.js && node tests/help-command-manual-review.test.js",
-    "test:extras": "npm run compile && node tests/chromium-dom-lifecycle.test.js && node tests/csv-table.test.js && node tests/table-editor-core.test.js && node tests/table-editor-assets.test.js && node tests/table-editor-browser.test.js && node tests/database-grid-browser.test.js && node tests/database-grid-scroll-retention-browser.test.js && node tests/help-all-token-manual-review.test.js && node tests/map-preview-editor.test.js && node tests/map-viewport-protocol-browser.test.js && node tests/map-animation-browser.test.js && node tests/map-blend-browser.test.js && node tests/map-preview.test.js && node tests/npc-dialog-visual.test.js && node tests/adddlg-companion.test.js && node tests/adddlg-provider.test.js && node tests/adddlg-window-browser.test.js && node tests/npc-dialog-visual-browser.test.js && node tests/pak-image-index.test.js && node tests/pak-inflate.test.js && node tests/pak-slots.test.js && node tests/text-encoding.test.js && node tests/batch-number-edit.test.js && node tests/zone-sync.test.js && node tests/zone-sync-command.test.js && node tests/script-sync-tree.test.js && node tests/script-sync-panel.test.js && node tests/quick-files.test.js && node tests/webview-security.test.js",
+    "test:log-cleaner": "node tests/log-cleaner.test.js",
+    "test:extras": "npm run compile && node tests/chromium-dom-lifecycle.test.js && node tests/csv-table.test.js && node tests/table-editor-core.test.js && node tests/table-editor-assets.test.js && node tests/table-editor-browser.test.js && node tests/database-grid-browser.test.js && node tests/database-grid-scroll-retention-browser.test.js && node tests/help-all-token-manual-review.test.js && node tests/map-preview-editor.test.js && node tests/map-viewport-protocol-browser.test.js && node tests/map-animation-browser.test.js && node tests/map-blend-browser.test.js && node tests/map-preview.test.js && node tests/npc-dialog-visual.test.js && node tests/adddlg-companion.test.js && node tests/adddlg-provider.test.js && node tests/adddlg-window-browser.test.js && node tests/npc-dialog-visual-browser.test.js && node tests/pak-image-index.test.js && node tests/pak-inflate.test.js && node tests/pak-slots.test.js && node tests/text-encoding.test.js && node tests/batch-number-edit.test.js && node tests/zone-sync.test.js && node tests/zone-sync-command.test.js && node tests/log-cleaner.test.js && node tests/script-sync-tree.test.js && node tests/script-sync-panel.test.js && node tests/quick-files.test.js && node tests/webview-security.test.js",
     "test:npc-dialog-strict": "npm run compile && node tests/npc-dialog-strict-suite.js",
     "test:layout": "node tests/project-layout.test.js && node tests/readme-marketplace.test.js && node tests/packaged-npc-dialog-runtime.test.js",
     "test:reload": "npm run compile && node tests/m2-reload.test.js",
@@ -775,12 +865,11 @@
     "iconv-lite": "^0.7.2",
     "mdb-reader": "^3.2.0",
     "sql.js": "^1.14.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+    "xlsx": "file:tools/vendor/xlsx-0.20.3.tgz"
   },
   "directories": {
     "doc": "docs",
     "test": "tests"
   },
-  "keywords": [],
   "type": "commonjs"
 }

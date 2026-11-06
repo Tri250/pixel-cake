@@ -244,7 +244,7 @@ async function main() {
   const marketplaceIcon = verifyMarketplaceIcon(packagedRoot, packagedPackage);
   verifyRequiredPackagedFiles(
     packagedRoot,
-    ['readme.md', 'LICENSE.txt', 'THIRD_PARTY_NOTICES.md'],
+    ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
     'Project notice'
   );
   verifyRequiredPackagedFiles(packagedRoot, REQUIRED_NPC_DIALOG_RUNTIME_FILES, 'Ctrl+F12');

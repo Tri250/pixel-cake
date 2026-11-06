@@ -183,7 +183,11 @@ async function main() {
     await send(oldGom,'beginEdit');assert.equal(oldGom.editClient,undefined);
     const tailGom=await open(gomFixture(path.join(root,'tail.pak'),{tail:true}));await send(tailGom,'beginEdit');assert.equal(tailGom.editClient,undefined);
     const {fixture:pairFixture}=require('./resource-editor-pair.test');
-    for(const suffix of ['wil','wzl']){
+    if(process.platform!=='win32'){
+      const pairRo=await open(pairFixture(path.join(root,'readonly.wil')));await send(pairRo,'beginEdit');
+      assert.equal(pairRo.editClient,undefined);assert.equal(state(pairRo).canExport,true);
+      assert.ok(pairRo.panel.messages.some(m=>m.type==='notice'&&/Windows/.test(m.text)));
+    }else for(const suffix of ['wil','wzl']){
       const pairSource=pairFixture(path.join(root,'source.'+suffix)),pairEntry=await open(pairSource);await send(pairEntry,'beginEdit');
       assert.equal(pairEntry.editInfo.saveMode,'directory');assert.equal(pairEntry.password,'');
       await send(pairEntry,'setOffsets',{index:0,x:-31,y:17});const folder=path.join(root,'new-'+suffix);

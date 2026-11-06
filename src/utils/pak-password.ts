@@ -104,8 +104,12 @@ export function resolvePakPasswordFromRecords(
   const matches: Array<{ score: number; password: string }> = [];
 
   for (const record of records) {
-    const configuredPath = normalizeConfiguredPath(record.configuredPath);
-    const resolvedConfiguredPath = path.resolve(path.dirname(record.configPath), configuredPath);
+    const configuredPath = record.configuredPath;
+    // Pak.txt 中的盘符路径是 Windows 客户端路径；在非 Windows 宿主上无法对应真实文件，
+    // 保持原样参与精确匹配（只会失配），避免与配置所在目录拼成无意义路径。
+    const resolvedConfiguredPath = isWindowsAbsolutePath(configuredPath)
+      ? configuredPath
+      : path.resolve(path.dirname(record.configPath), configuredPath);
     let score = 0;
 
     if (normalizeAbsolutePath(resolvedConfiguredPath) === pakPathKey) {
@@ -114,13 +118,13 @@ export function resolvePakPasswordFromRecords(
       const rebasedPath = rebaseConfiguredPakPath(configuredPath, dataRoot);
       if (normalizeAbsolutePath(rebasedPath) === pakPathKey) {
         score = 3;
-      } else if (!path.isAbsolute(configuredPath)) {
-        const configuredRelative = stripLeadingDataDirectory(configuredPath);
+      } else if (!isWindowsAbsolutePath(configuredPath)) {
+        const configuredRelative = stripLeadingDataDirectory(configuredPath).join(path.sep);
         if (normalizeRelativePath(configuredRelative) === relativePakPath) score = 2;
       }
     }
 
-    if (score === 0 && path.basename(configuredPath).toLowerCase() === pakBasename) score = 1;
+    if (score === 0 && configuredPathBasename(configuredPath).toLowerCase() === pakBasename) score = 1;
     if (score > 0) matches.push({ score, password: record.password });
   }
 
@@ -134,13 +138,16 @@ export function rebaseConfiguredPakPath(
   configuredPath: string,
   dataDirectory: string
 ): string {
-  const normalized = normalizeConfiguredPath(configuredPath);
-  const dataTail = pathAfterDataDirectory(normalized);
-  if (dataTail) return path.resolve(dataDirectory, dataTail);
-  if (!path.isAbsolute(normalized)) {
-    return path.resolve(dataDirectory, stripLeadingDataDirectory(normalized));
+  const dataTail = pathAfterDataDirectory(configuredPath);
+  if (dataTail) return path.resolve(dataDirectory, ...dataTail);
+  if (!isWindowsAbsolutePath(configuredPath)) {
+    return path.resolve(dataDirectory, ...stripLeadingDataDirectory(configuredPath));
   }
-  return path.resolve(dataDirectory, path.basename(normalized));
+  // 无 data 段的 Windows 绝对路径：只按 PAK 文件名改写到所选数据目录。
+  const segments = configuredPathSegments(configuredPath);
+  return segments.length
+    ? path.resolve(dataDirectory, segments[segments.length - 1])
+    : path.resolve(dataDirectory);
 }
 
 export function findPasswordInPakConfig(
@@ -199,8 +206,21 @@ function normalizeAbsolutePath(filePath: string): string {
   return path.normalize(path.resolve(filePath)).toLowerCase();
 }
 
-function normalizeConfiguredPath(filePath: string): string {
-  return filePath.replace(/[\\/]+/g, path.sep);
+function isWindowsAbsolutePath(filePath: string): boolean {
+  return /^[a-z]:[\\/]/i.test(filePath) || filePath.startsWith('\\\\');
+}
+
+/**
+ * 按 Windows 路径语义切分配置路径：Pak.txt 由 Windows 客户端写出，反斜杠与正斜杠
+ * 都视为分隔符；宿主（可能是 POSIX）绝对路径同样只按分隔符切分，不做重写。
+ */
+function configuredPathSegments(filePath: string): string[] {
+  return filePath.split(/[\\/]+/).filter(Boolean);
+}
+
+function configuredPathBasename(filePath: string): string {
+  const segments = configuredPathSegments(filePath);
+  return segments[segments.length - 1] || '';
 }
 
 function normalizeRelativePath(filePath: string): string {
@@ -210,21 +230,18 @@ function normalizeRelativePath(filePath: string): string {
     .toLowerCase();
 }
 
-function pathAfterDataDirectory(filePath: string): string | undefined {
-  const parts = normalizeConfiguredPath(filePath).split(path.sep).filter(Boolean);
-  let dataIndex = -1;
-  for (let index = 0; index < parts.length; index++) {
-    if (parts[index].toLowerCase() === 'data') dataIndex = index;
-  }
+function pathAfterDataDirectory(filePath: string): string[] | undefined {
+  const parts = configuredPathSegments(filePath);
+  const dataIndex = parts.findIndex(part => part.toLowerCase() === 'data');
   return dataIndex >= 0 && dataIndex < parts.length - 1
-    ? parts.slice(dataIndex + 1).join(path.sep)
+    ? parts.slice(dataIndex + 1)
     : undefined;
 }
 
-function stripLeadingDataDirectory(filePath: string): string {
-  const parts = normalizeConfiguredPath(filePath).split(path.sep).filter(part => part && part !== '.');
+function stripLeadingDataDirectory(filePath: string): string[] {
+  const parts = configuredPathSegments(filePath).filter(part => part && part !== '.');
   if (parts[0]?.toLowerCase() === 'data') parts.shift();
-  return parts.join(path.sep);
+  return parts;
 }
 
 function uniquePaths(paths: string[]): string[] {

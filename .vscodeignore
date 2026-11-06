@@ -94,10 +94,15 @@ data/audit-report/**
 data/backup-*/**
 docs/**
 *.md
-!README.md
+!/README.md
 !THIRD_PARTY_NOTICES.md
+!CHANGELOG.md
 data/temp/**
 vscode-app-*.log
 *.txt
 *.py
 scripts/**
+
+# 冻结运行时与 VC++ Runtime 的许可证必须随包交付（须置于 *.txt 之后）
+!tools/PakBridge/bin/frozen_application_license.txt
+!tools/PakBridge/bin/share/licenses/vc_redist/LICENSE.txt

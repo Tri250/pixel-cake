@@ -87,6 +87,8 @@ export function openXlsTable(data: Uint8Array | Buffer): XlsTableState {
 export function updateXlsTableRows(state: XlsTableState, nextRows: string[][]): void {
   const sheet = state.workbook.Sheets[state.sheetName];
   if (!sheet) throw new Error(`工作表不存在: ${state.sheetName}`);
+  // 保留原始起始区域（!ref 左上角）：非 A1 起始的工作表保存后内容不发生偏移（RD03）
+  const origin = sheet['!ref'] ? XLSX.utils.decode_range(sheet['!ref']).s : { r: 0, c: 0 };
 
   const normalized = cloneRows(nextRows.length ? nextRows : [['']]);
   const oldSize = usedSize(state.rows);
@@ -101,7 +103,7 @@ export function updateXlsTableRows(state: XlsTableState, nextRows: string[][]): 
       const newValue = hasNewCell ? normalized[row][column] : '';
       if (hasNewCell && newValue === oldValue) continue;
 
-      const address = XLSX.utils.encode_cell({ r: row, c: column });
+      const address = XLSX.utils.encode_cell({ r: origin.r + row, c: origin.c + column });
       if (!hasNewCell || newValue === '') {
         delete sheet[address];
         continue;
@@ -111,8 +113,8 @@ export function updateXlsTableRows(state: XlsTableState, nextRows: string[][]): 
   }
 
   sheet['!ref'] = XLSX.utils.encode_range({
-    s: { r: 0, c: 0 },
-    e: { r: newSize.rowCount - 1, c: newSize.columnCount - 1 },
+    s: { r: origin.r, c: origin.c },
+    e: { r: origin.r + newSize.rowCount - 1, c: origin.c + newSize.columnCount - 1 },
   });
   state.rows = normalized;
 }

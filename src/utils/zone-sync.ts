@@ -323,6 +323,32 @@ function resolveTargetPath(targetRoot: string, relativePath: string): string {
   if (!isSameOrInside(targetPath, resolvedRoot)) {
     throw new Error(`同步目标超出所选区服根目录: ${relativePath}`);
   }
+  // 逐级 realpath 围栏：词法检查无法发现目录联接/junction/符号链接造成的重定向，
+  // 落盘前必须确认目标路径经 realpath 解析后仍在目标根之内。
+  let realRoot: string;
+  try {
+    realRoot = fs.realpathSync(resolvedRoot);
+  } catch {
+    realRoot = resolvedRoot; // 目标根尚未创建，交由后续 mkdir 建立
+  }
+  const pendingSegments: string[] = [];
+  let existing = targetPath;
+  while (!fs.existsSync(existing)) {
+    const parent = path.dirname(existing);
+    if (parent === existing) break;
+    pendingSegments.unshift(path.basename(existing));
+    existing = parent;
+  }
+  let realExisting: string;
+  try {
+    realExisting = fs.realpathSync(existing);
+  } catch {
+    realExisting = existing;
+  }
+  const realTarget = path.join(realExisting, ...pendingSegments);
+  if (!isSameOrInside(realTarget, realRoot)) {
+    throw new Error(`同步目标经符号链接解析后超出所选区服根目录: ${relativePath}`);
+  }
   return targetPath;
 }
 

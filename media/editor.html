@@ -5287,24 +5287,20 @@ function getColorCss(colorCode) {
 
                 // === 解析文字 ===
                 // 格式: <&text:内容:x:y{fcolor=颜色;fbold=1;fsize=大小;fname=字体}/@脚本>
-                var textMatch = line.match(/<&text:([^:]+):(\d+):(\d+)\{([^}]*)\}(?:\/[@#]([^>]*))?>/i);
-                if (textMatch) {
+                // 内容可含冒号/数字，坐标可为负，一行可有多个文字标签（VISUAL-04）。
+                TEXT_TAG_RE.lastIndex = 0;
+                var textMatch;
+                var textParsed = false;
+                while ((textMatch = TEXT_TAG_RE.exec(line)) !== null) {
+                    textParsed = true;
                     var text = textMatch[1];
                     var tx = parseInt(textMatch[2]) - 4; // 反向补偿
                     var ty = parseInt(textMatch[3]) - 4;
-                    var propStr = textMatch[4];
                     var script = textMatch[5] || '';
 
-                    // 解析属性
-                    var color = 255, bold = false, size = 12, font = '宋体';
-                    var propParts = propStr.split(';');
-                    for (var p = 0; p < propParts.length; p++) {
-                        var kv = propParts[p].split('=');
-                        if (kv[0] === 'fcolor') color = parseInt(kv[1]) || 255;
-                        else if (kv[0] === 'fbold') bold = kv[1] === '1';
-                        else if (kv[0] === 'fsize') size = parseInt(kv[1]) || 12;
-                        else if (kv[0] === 'fname') font = kv[1] || '宋体';
-                    }
+                    // 解析属性（fcolor=0 为合法黑色，不得被默认值覆盖）
+                    var textProps = parseTextTagProps(textMatch[4]);
+                    var color = textProps.color, bold = textProps.bold, size = textProps.size, font = textProps.font;
 
                     var result = renderTextToCanvas(text, color, script, font, size, bold);
                     pendingElements.push({
@@ -5323,12 +5319,12 @@ function getColorCss(colorCode) {
                             textBold: bold
                         }
                     });
-                    continue;
                 }
+                if (textParsed) continue;
 
                 // === 解析按钮 ===
-                // 格式: <&imgex:will:默认:移入:点击:x:y[:发送序号]/@触发脚本>
-                var btnMatch = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+)(?::(\d+))?\/[@#]([^>]*)>/i);
+                // 格式: <&imgex:will:默认:移入:点击:x:y[:发送序号]/@触发脚本>（x/y 可为负，VISUAL-04）
+                var btnMatch = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+):(-?\d+):(-?\d+)(?::(\d+))?\/[@#]([^>]*)>/i);
                 if (btnMatch) {
                     var btnWillIdx = parseInt(btnMatch[1]);
                     var defaultIdx = parseInt(btnMatch[2]);
@@ -5364,8 +5360,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析图片 ===
-                // 格式: <&img:图片序号:will:x:y>
-                var imgMatch = line.match(/<&img:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 格式: <&img:图片序号:will:x:y>（x/y 可为负，VISUAL-04）
+                var imgMatch = line.match(/<&img:(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (imgMatch) {
                     var imgIdx = parseInt(imgMatch[1]);
                     var imgWillIdx = parseInt(imgMatch[2]);
@@ -5391,8 +5387,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析简单imgex图片（非button，2个索引格式） ===
-                // 格式: <&imgex:will:图片序号:x:y>
-                var imgexSimple = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 格式: <&imgex:will:图片序号:x:y>（x/y 可为负，VISUAL-04）
+                var imgexSimple = line.match(/<&imgex:(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (imgexSimple) {
                     var simpleWillIdx = parseInt(imgexSimple[1]);
                     var iIdx = parseInt(imgexSimple[2]);
@@ -5418,13 +5414,13 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析倒计时 ===
-                // 格式: <&COUNTDOWN:秒数:1:颜色:X:Y>
-                var cdMatch = line.match(/<&COUNTDOWN:(\d+):(\d+):(\d+):(\d+):(\d+)>/i);
+                // 格式: <&COUNTDOWN:秒数:1:颜色:X:Y>（坐标可为负；写侧统一 +4 补偿，读侧须对称减 4，否则每轮往返累计偏移，VISUAL-03/VISUAL-04）
+                var cdMatch = line.match(/<&COUNTDOWN:(\d+):(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (cdMatch) {
                     var seconds = parseInt(cdMatch[1]);
                     var cdColor = parseInt(cdMatch[3]);
-                    var cdX = parseInt(cdMatch[4]);
-                    var cdY = parseInt(cdMatch[5]);
+                    var cdX = parseInt(cdMatch[4]) - 4; // 反向补偿
+                    var cdY = parseInt(cdMatch[5]) - 4;
 
                     var hours = Math.floor(seconds / 3600);
                     var mins = Math.floor((seconds % 3600) / 60);
@@ -5448,8 +5444,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析文本框 ===
-                // 格式: <&INPUTTEXT:ID:X:Y:宽:高:背景色:边框色:文字色:最小长度:最大长度:错误提示:提示文字:提示颜色>
-                var inputTextMatch = line.match(/<&INPUTTEXT:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
+                // 格式: <&INPUTTEXT:ID:X:Y:宽:高:背景色:边框色:文字色:最小长度:最大长度:错误提示:提示文字:提示颜色>（X/Y 可为负，VISUAL-04）
+                var inputTextMatch = line.match(/<&INPUTTEXT:(\d+):(-?\d+):(-?\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
                 if (inputTextMatch) {
                     var itId = parseInt(inputTextMatch[1]);
                     var itX = parseInt(inputTextMatch[2]) - 4; // 反向补偿
@@ -5484,8 +5480,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析数字框 ===
-                // 格式: <&INPUTNUM:ID:X:Y:宽:高:背景色:边框色:文字色:最小值:最大值:错误提示:提示文字:提示颜色>
-                var inputNumMatch = line.match(/<&INPUTNUM:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
+                // 格式: <&INPUTNUM:ID:X:Y:宽:高:背景色:边框色:文字色:最小值:最大值:错误提示:提示文字:提示颜色>（X/Y 可为负，VISUAL-04）
+                var inputNumMatch = line.match(/<&INPUTNUM:(\d+):(-?\d+):(-?\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
                 if (inputNumMatch) {
                     var inId = parseInt(inputNumMatch[1]);
                     var inX = parseInt(inputNumMatch[2]) - 4; // 反向补偿
@@ -5520,8 +5516,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析特效 ===
-                // 格式: <&PlayImg:will:开始图片序号:播放张数:播放速度:X:Y>
-                var effectMatch = line.match(/<&PlayImg:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+)(?::(\d+))?>/i);
+                // 格式: <&PlayImg:will:开始图片序号:播放张数:播放速度:X:Y>（X/Y 可为负，VISUAL-04）
+                var effectMatch = line.match(/<&PlayImg:(\d+):(\d+):(\d+):(\d+):(-?\d+):(-?\d+)(?::(\d+))?>/i);
                 if (effectMatch) {
                     var efWillIdx = parseInt(effectMatch[1]);
                     var efStartIdx = parseInt(effectMatch[2]);
@@ -5554,8 +5550,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析进度条 ===
-                // 完整格式: <&ProgressBar:X:Y:will:bg:fill:...:offsetX:offsetY:...>
-                var pbMatch = line.match(/<&ProgressBar:(\d+):(\d+)(?::(\d+):(\d+):(\d+):\d+:\d+:([\d-]+):([\d-]+):[^>]*)?>/i);
+                // 完整格式: <&ProgressBar:X:Y:will:bg:fill:...:offsetX:offsetY:...>（X/Y 可为负，VISUAL-04）
+                var pbMatch = line.match(/<&ProgressBar:(-?\d+):(-?\d+)(?::(\d+):(\d+):(\d+):\d+:\d+:([\d-]+):([\d-]+):[^>]*)?>/i);
                 if (pbMatch) {
                     var pbX = parseInt(pbMatch[1]);
                     var pbY = parseInt(pbMatch[2]);
@@ -5614,8 +5610,8 @@ function getColorCss(colorCode) {
                 }
 
                 // === 解析装备框 ===
-                // 格式: <&itemshow:<$str(n$展示idxN)>:0:x:y:1>
-                var equipMatch = line.match(/<&itemshow:[^:]+:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 格式: <&itemshow:<$str(n$展示idxN)>:0:x:y:1>（x/y 可为负，VISUAL-04）
+                var equipMatch = line.match(/<&itemshow:[^:]+:(\d+):(-?\d+):(-?\d+):(\d+)>/i);
                 if (equipMatch) {
                     var eqX = parseInt(equipMatch[2]);
                     var eqY = parseInt(equipMatch[3]);
@@ -6130,55 +6126,11 @@ function getColorCss(colorCode) {
 
         // 克隆元素
         function cloneElement(el) {
-            var cloned = {
-                img: el.img,
-                x: el.x,
-                y: el.y,
-                w: el.w,
-                h: el.h,
-                name: el.name,
-                isText: el.isText,
-                textContent: el.textContent,
-                textColor: el.textColor,
-                textFont: el.textFont,
-                textSize: el.textSize,
-                textBold: el.textBold,
-                textScript: el.textScript,
-                isButton: el.isButton,
-                buttonImages: el.buttonImages,
-                buttonImgs: el.buttonImgs,
-                buttonState: el.buttonState,
-                isImgTag: el.isImgTag,
-                // 复制的背景是普通图；一个画布始终只有一个背景原点。
-                isDialogBg: el.isImgTag ? false : undefined,
-                isEffect: el.isEffect,
-                effectStartIdx: el.effectStartIdx,
-                effectFrameCount: el.effectFrameCount,
-                effectSpeed: el.effectSpeed,
-                effectFrames: el.effectFrames,
-                isAnim: el.isAnim,
-                animStartIdx: el.animStartIdx,
-                animFrameCount: el.animFrameCount,
-                animSpeed: el.animSpeed,
-                animFrames: el.animFrames,
-                isCountdown: el.isCountdown,
-                countdownStartIdx: el.countdownStartIdx,
-                countdownDigits: el.countdownDigits,
-                isTextInput: el.isTextInput,
-                isNumInput: el.isNumInput,
-                inputId: el.inputId,
-                isCloseBtn: el.isCloseBtn,
-                isEquipFrame: el.isEquipFrame,
-                isProgressBar: el.isProgressBar,
-                progressBgStartIdx: el.progressBgStartIdx,
-                progressBarStartIdx: el.progressBarStartIdx,
-                assetIdx: el.assetIdx,
-                originalW: el.originalW,
-                originalH: el.originalH,
-                visible: el.visible,
-                willIdx: el.willIdx,
-                label: el.label
-            };
+            // 深拷贝元素：复制粘贴必须完整保留控件类型与全部参数（VISUAL-01），
+            // 按字段白名单拷贝会随新控件类型不断漏字段。
+            var cloned = JSON.parse(JSON.stringify(el));
+            // 复制的背景是普通图；一个画布始终只有一个背景原点。
+            cloned.isDialogBg = undefined;
             return cloned;
         }
 
@@ -6329,6 +6281,22 @@ function getColorCss(colorCode) {
 
         // 静默版generateCode，返回代码字符串而不是写入textarea
         function pad3(n){var s=String(Math.round(Math.abs(n)));while(s.length<3)s="0"+s;return n<0?"-"+s:s}
+        // 文字标签属性解析：fcolor=0 是合法黑色，不得被 || 默认值改成 255（VISUAL-02）；键名大小写不敏感，与扩展侧口径一致。
+        function parseTextTagProps(propStr){
+            var props={color:255,bold:false,size:12,font:'宋体'};
+            String(propStr||'').split(';').forEach(function(part){
+                var kv=part.split('=');
+                var key=(kv[0]||'').trim().toLowerCase();
+                var raw=(kv[1]||'').trim();
+                if(key==='fcolor'){var c=parseInt(raw,10);props.color=isNaN(c)?255:c;}
+                else if(key==='fbold')props.bold=raw==='1';
+                else if(key==='fsize'){var fs=parseInt(raw,10);props.size=isNaN(fs)?12:fs;}
+                else if(key==='fname')props.font=raw||'宋体';
+            });
+            return props;
+        }
+        // 文字标签正则：内容允许冒号与数字（非贪婪取最后一组合法坐标）、坐标允许负号（VISUAL-04）。
+        var TEXT_TAG_RE=/<&text:([\s\S]*?):(-?\d+):(-?\d+)\{([^}]*)\}(?:\/[@#]([^>]*))?>/gi;
 function generateCodeSilent(willIndex) {
             if (!engCfg().supportsCodeGeneration) return null;
             if (!willIndex || elements.length === 0) return null;
@@ -6552,29 +6520,25 @@ function generateCodeSilent(willIndex) {
                 var line = lines[i].trim();
                 if (!line || line.startsWith('#') || line.startsWith('[@') || line.startsWith('GetDBItemFieldValue') || line.indexOf('OPENMERCHANTBIGDLG') >= 0) continue;
 
-                // 文字
-                var textMatch = line.match(/<&text:([^:]+):(\d+):(\d+)\{([^}]*)\}(?:\/[@#]([^>]*))?>/i);
-                if (textMatch) {
+                // 文字（内容可含冒号/数字、坐标可为负、一行多个标签，VISUAL-04；fcolor=0 不被默认值覆盖，VISUAL-02）
+                TEXT_TAG_RE.lastIndex = 0;
+                var textMatch;
+                var textParsed = false;
+                while ((textMatch = TEXT_TAG_RE.exec(line)) !== null) {
+                    textParsed = true;
                     var text = textMatch[1];
                     var tx = parseInt(textMatch[2]) - 4;
                     var ty = parseInt(textMatch[3]) - 4;
-                    var propStr = textMatch[4];
                     var script = textMatch[5] || '';
-                    var color = 255, bold = false, size = 12, font = '宋体';
-                    propStr.split(';').forEach(function(part) {
-                        var kv = part.split('=');
-                        if (kv[0]==='fcolor') color = parseInt(kv[1])||255;
-                        else if (kv[0]==='fbold') bold = kv[1]==='1';
-                        else if (kv[0]==='fsize') size = parseInt(kv[1])||12;
-                        else if (kv[0]==='fname') font = kv[1]||'宋体';
-                    });
+                    var textProps = parseTextTagProps(textMatch[4]);
+                    var color = textProps.color, bold = textProps.bold, size = textProps.size, font = textProps.font;
                     var result = renderTextToCanvas(text, color, script, font, size, bold);
                     pendingElements.push({ type:'text', src:result.canvas.toDataURL(), data:{ x:tx, y:ty, w:result.width, h:result.height, name:'文字: '+text, isText:true, textContent:text, textColor:color, textScript:script, textFont:font, textSize:size, textBold:bold } });
-                    continue;
                 }
+                if (textParsed) continue;
 
-                // 按钮
-                var btnMatch = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+)(?::(\d+))?\/[@#]([^>]*)>/i);
+                // 按钮（x/y 可为负，VISUAL-04）
+                var btnMatch = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+):(-?\d+):(-?\d+)(?::(\d+))?\/[@#]([^>]*)>/i);
                 if (btnMatch && folderAssets.length > 0) {
                     var btnWill2 = parseInt(btnMatch[1]);
                     var dIdx2 = parseInt(btnMatch[2]), hIdx2 = parseInt(btnMatch[3]), cIdx2 = parseInt(btnMatch[4]);
@@ -6590,8 +6554,8 @@ function generateCodeSilent(willIndex) {
                     continue;
                 }
 
-                // 图片
-                var imgMatch = line.match(/<&img:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 图片（x/y 可为负，VISUAL-04）
+                var imgMatch = line.match(/<&img:(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (imgMatch && folderAssets.length > 0) {
                     var iIdx = parseInt(imgMatch[1]);
                     var imgWill2 = parseInt(imgMatch[2]);

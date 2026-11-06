@@ -257,6 +257,7 @@ async function requestViewport(provider, identity, requestId, generation, messag
 async function main() {
   const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-map-provider-cache-hit-'));
   const previousLocalAppData = process.env.LOCALAPPDATA;
+  const previousXdgCacheHome = process.env.XDG_CACHE_HOME;
   try {
     const localAppData = path.join(temporaryRoot, 'Local');
     const workspaceRoot = path.join(temporaryRoot, 'workspace');
@@ -270,6 +271,8 @@ async function main() {
     );
     fs.mkdirSync(workspaceRoot, { recursive: true });
     process.env.LOCALAPPDATA = localAppData;
+    // POSIX 下缓存根由 XDG_CACHE_HOME 决定，按平台注入对应变量以对齐缓存根断言。
+    if (process.platform !== 'win32') process.env.XDG_CACHE_HOME = localAppData;
 
     const vscodeStub = makeVscodeStub(workspaceRoot);
     const { MapPreviewProvider } = loadCompiledProvider(vscodeStub);
@@ -415,6 +418,8 @@ async function main() {
   } finally {
     if (previousLocalAppData === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = previousLocalAppData;
+    if (previousXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = previousXdgCacheHome;
     fs.rmSync(temporaryRoot, { recursive: true, force: true });
   }
 }

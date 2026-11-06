@@ -158,6 +158,9 @@ export function resolveScriptPathReference(
   baseKind: ScriptPathBase = 'auto'
 ): ScriptPathResolution {
   let trimmed = reference.trim().replace(/^['"]|['"]$/g, '');
+  // GOM 脚本中的路径以反斜杠书写；POSIX 的 path.resolve 不把 "\" 当分隔符，
+  // 统一归一为正斜杠后再解析，保证 Windows 与 Linux 行为一致。
+  trimmed = trimmed.replace(/\\/g, '/');
   if (baseKind !== 'auto') {
     if (/^[a-z]:/i.test(trimmed)) return { candidates: [] };
     trimmed = trimmed.replace(/^[\\/]+/, '').replace(/^\.[\\/]/, '');

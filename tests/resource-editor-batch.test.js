@@ -8,7 +8,9 @@ const {removeTemporaryDirectory}=require('./helpers/temp-cleanup');
 const jpk=require('./resource-editor-jpk.test'),gom=require('./resource-editor-gom.test'),pair=require('./resource-editor-pair.test');
 const root=fs.mkdtempSync(path.join(os.tmpdir(),'boo-batch-')),sessions=[];
 const snapshot=s=>({info:s.info(),slots:s.listSlots(0,100)});
-try {
+if(process.platform!=='win32'){
+ console.log('resource-editor-batch.test.js: SKIP (PAIR batch profiles require Windows)');
+}else try {
  for(const [ext,fixture,ctor,password]of[
   ['jpk',jpk.fixture,'JpkEditSession',jpk.password],['pak',gom.fixture,'GomEditSession',gom.password],
   ['wil',pair.fixture,'PairEditSession',''],['wzl',pair.fixture,'PairEditSession','']]){

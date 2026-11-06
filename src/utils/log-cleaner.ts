@@ -3,6 +3,11 @@
  */
 import * as fs from 'fs';
 import * as path from 'path';
+import { isPathInside } from './path';
+
+function realPathOrSelf(target: string): string {
+  try { return fs.realpathSync(target); } catch { return path.resolve(target); }
+}
 
 /** 返回 [删除文件数, 删除目录数, 失败数, 跳过的不存在目录数] */
 export async function cleanAllLogs(wsRoot: string): Promise<[number, number, number, number]> {
@@ -10,8 +15,14 @@ export async function cleanAllLogs(wsRoot: string): Promise<[number, number, num
   const j = (...segs: string[]) => path.resolve(wsRoot, ...segs);
   let filesOk = 0, dirsOk = 0, fail = 0, skip = 0;
 
+  // ST-08：固定清理目录若是 junction/符号链接且指向工作区之外，跳过整个目录，
+  // 避免把服务端之外的文件当作日志删除。逐级 realpath 判定（与区服同步同一围栏）。
+  const rootReal = realPathOrSelf(wsRoot);
+  const isInsideRoot = (dir: string) => isPathInside(rootReal, realPathOrSelf(dir));
+
   // 清理目录下所有匹配扩展名的文件（不递归，不删目录本身）
   const cleanFiles = (dir: string, exts: string[]) => {
+    if (!isInsideRoot(dir)) { skip++; return; }
     if (!fs.existsSync(dir)) { skip++; return; }
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });
@@ -28,6 +39,7 @@ export async function cleanAllLogs(wsRoot: string): Promise<[number, number, num
 
   // 递归清理目录下所有匹配扩展名的文件，并删除清理后变空的子目录
   const cleanRecursive = (dir: string, exts: string[]) => {
+    if (!isInsideRoot(dir)) { skip++; return; }
     if (!fs.existsSync(dir)) { skip++; return; }
     try {
       const entries = fs.readdirSync(dir, { withFileTypes: true });

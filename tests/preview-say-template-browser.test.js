@@ -46,7 +46,7 @@ assert.ok(candidates.length, 'Chromium required');
 for (const [i, executable] of candidates.entries()) {
   const r = spawnSync(executable, ['--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files', '--window-size=1440,1000', '--virtual-time-budget=6500', '--dump-dom', '--user-data-dir=' + path.join(out, 'profile-' + i), '--screenshot=' + path.join(out, 'preview.png'), pathToFileURL(file).href], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   const dom = r.stdout || '';
-  const version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+  const version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout?.trim()||'<unknown>';
   const elementCount = (dom.match(/class="canvas-element\b/g) || []).length;
   attempts.push({ executable, version, elementCount, status: r.status, error: String(r.error || ''), diagnostic: dom.match(/data-error="[^"]*"/)?.[0] });
   fs.writeFileSync(path.join(out, 'attempts.json'), JSON.stringify(attempts, null, 2)); fs.writeFileSync(path.join(out, 'dom-' + i + '.html'), dom);

@@ -92,6 +92,16 @@ function md5(value) {
   return crypto.createHash('md5').update(value).digest('hex');
 }
 
+// 生产代码在 POSIX 宿主上按 XDG_CACHE_HOME 解析缓存根；测试按平台注入对应变量，
+// 保证同一组缓存门控断言在 Windows 与 Linux/macOS 下都真实生效。
+function applyCacheEnv(localAppData) {
+  if (process.platform === 'win32') {
+    process.env.LOCALAPPDATA = localAppData;
+  } else {
+    process.env.XDG_CACHE_HOME = localAppData;
+  }
+}
+
 function cacheBase(localAppData) {
   return path.join(localAppData, 'BOO-NGOM-Editor', 'cache');
 }
@@ -307,10 +317,11 @@ async function hydrateScenario(scenario, itemIndices, looksByIdx) {
 async function main() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-itemshow-cache-gate-'));
   const originalLocalAppData = process.env.LOCALAPPDATA;
+  const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   try {
     {
       const scenario = makeScenario(path.join(root, 'priority-slot'));
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const preferredPak = path.join(scenario.customData, 'Items2.pak');
       const fallbackPak = path.join(scenario.baseData, 'Items2.pak');
       fs.writeFileSync(preferredPak, 'preferred');
@@ -331,7 +342,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, 'priority-not-indexed'));
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const preferredPak = path.join(scenario.customData, 'Items2.pak');
       const fallbackPak = path.join(scenario.baseData, 'Items2.pak');
       fs.writeFileSync(preferredPak, 'preferred');
@@ -347,7 +358,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, 'direct-blank'));
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const pakPath = path.join(scenario.customData, 'Items2.pak');
       fs.writeFileSync(pakPath, 'direct-blank');
       writeDirectCache(
@@ -369,7 +380,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, 'same-stat-md5'));
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const pakPath = path.join(scenario.customData, 'Items2.pak');
       const original = Buffer.from('ABCD');
       fs.writeFileSync(pakPath, original);
@@ -431,7 +442,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, 'gee-same-stat-md5'), { engine: 'GEE' });
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const pakPath = path.join(scenario.customData, 'Items2.pak');
       const original = Buffer.from('GEE1');
       fs.writeFileSync(pakPath, original);
@@ -479,7 +490,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, '996pc-same-stat-md5'), { engine: '996PC' });
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const jpkPath = path.join(scenario.customData, 'Items2.jpk');
       const original = Buffer.from('PC01');
       fs.writeFileSync(jpkPath, original);
@@ -527,7 +538,7 @@ async function main() {
 
     {
       const scenario = makeScenario(path.join(root, 'missing-md5'));
-      process.env.LOCALAPPDATA = scenario.localAppData;
+      applyCacheEnv(scenario.localAppData);
       const pakPath = path.join(scenario.customData, 'Items2.pak');
       fs.writeFileSync(pakPath, 'missing-md5');
       writeDirectCache(
@@ -549,6 +560,8 @@ async function main() {
   } finally {
     if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = originalLocalAppData;
+    if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
     invalidatePatchCacheIndex();
     await removeTemporaryDirectory(root);
   }

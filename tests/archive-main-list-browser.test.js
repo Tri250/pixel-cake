@@ -45,7 +45,10 @@ async function main() {
         dragStart({dataTransfer:blankTransfer,preventDefault(){blocked=true}},1);addToCanvas(1);
         assert(blocked && elements.length===0 && !blankTransfer.getData('idx'),'blank slots remain unselectable, without fabricated canvas images');
         const pending=deferredImage();addToCanvas(0);window.Image=nativeImage;await wait(pending.ready);
-        blank.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
+        // 虚拟列表可能在此期间经 rAF 重建 DOM，重新查询以保证事件能冒泡到 #assetsList 的委托监听器。
+        const liveBlank=$('assetsList').querySelector('[data-idx="1"]');
+        assert(liveBlank && liveBlank.dataset.slotStatus==='empty','blank slot survives the virtual re-render');
+        liveBlank.dispatchEvent(new MouseEvent('contextmenu',{bubbles:true,cancelable:true}));
         assert(getComputedStyle($('assetContextMenu')).display!=='none','slot menu opens');
         load('new.pak',8);pending.release();
         assert(getComputedStyle($('assetContextMenu')).display==='none','source change closes stale slot menu');

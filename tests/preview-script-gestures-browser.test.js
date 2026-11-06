@@ -98,7 +98,7 @@ window.addEventListener('load',async()=>{try{await wait();const originalUrl=loca
   const candidates=[...new Set([process.env.BOO_BROWSER_EXECUTABLE,'C:/Program Files/Google/Chrome/Application/chrome.exe','C:/Program Files (x86)/Microsoft/Edge/Application/msedge.exe'].filter(file=>file&&fs.existsSync(file)))];assert.ok(candidates.length,'installed Chromium required');
   for(const [index,executable]of candidates.entries()){
    const r=spawnSync(executable,['--headless=new','--disable-gpu','--no-first-run','--allow-file-access-from-files','--window-size=1440,1050','--virtual-time-budget=16000','--dump-dom','--user-data-dir='+path.join(out,'profile-'+index),'--screenshot='+path.join(out,'preview-'+index+'.png'),pathToFileURL(file).href],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:32*1024*1024});
-   const dom=r.stdout||'',version=spawnSync('powershell.exe',['-NoProfile','-Command',`(Get-Item -LiteralPath '${executable.replace(/'/g,"''")}').VersionInfo.ProductVersion`],{encoding:'utf8',windowsHide:true}).stdout.trim();
+   const dom=r.stdout||'',version=spawnSync('powershell.exe',['-NoProfile','-Command',`(Get-Item -LiteralPath '${executable.replace(/'/g,"''")}').VersionInfo.ProductVersion`],{encoding:'utf8',windowsHide:true}).stdout?.trim()||'<unknown>';
    const attempt={executable,version,status:r.status,passed:r.status===0&&dom.includes('data-script-gestures="PASS"'),error:String(r.error||''),stderr:r.stderr||'',stdoutLength:dom.length,diagnostic:dom.match(/data-error="[^"]*"/)?.[0],elementCount:(dom.match(/class="canvas-element\b/g)||[]).length};
    fs.writeFileSync(path.join(out,'dom-'+index+'.html'),dom);
    if(attempt.passed){

@@ -187,69 +187,39 @@ jobs:
 
           $packageJson = Join-Path $env:GITHUB_WORKSPACE 'package.json'
           $manifest = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
-          $vsixName = "$($manifest.name)-$($manifest.version).vsix"
 
-          $srcDir = Join-Path $env:RUNNER_TEMP 'sfx-src'
-          New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
-          Copy-Item -LiteralPath $env:VSIX_PATH -Destination (Join-Path $srcDir $vsixName) -Force
-
-          $exePath = Join-Path $env:RUNNER_TEMP "$($manifest.name)-$($manifest.version)-Setup-Windows.exe"
-          $sedPath = Join-Path $env:RUNNER_TEMP 'setup.sed'
-
-          # IExpress SED：自解压并静默执行 code --install-extension（code CLI 不在 PATH 时仅解压不报错阻断）
-          # 采用向导生成风格：节之间保留空行，文件清单为 "%FILE0%=文件名" 形式。
-          $sed = @"
-          [Version]
-          Class=IEXPRESS
-          SEDVersion=1
-
-          [Options]
-          PackagePurpose=InstallApp
-          ShowInstallProgramWindow=0
-          HideInstallProgramWindow=1
-          AppLaunched=cmd /c code --install-extension $vsixName
-          PostInstallCmd=<None>
-          AdminQuietInstCmd=<None>
-          UserQuietInstCmd=<None>
-          TargetName=$exePath
-          FriendlyName=BOO Visual Editor Setup
-          SourceFiles0=$srcDir\
-
-          [SourceFiles]
-          SourceFiles0=$srcDir\%
-
-          [SourceFiles0]
-          %FILE0%=$vsixName
-          "@
-
-          Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
-
-          if (-not (Test-Path "$env:SystemRoot\System32\iexpress.exe")) {
-            throw "iexpress.exe not found at $env:SystemRoot\System32\iexpress.exe"
+          # VSIX 定位：build 输出优先，回退到 artifacts 目录内最近产物
+          $vsixPath = "$env:VSIX_PATH"
+          if (-not (Test-Path -LiteralPath $vsixPath -PathType Leaf)) {
+            $foundVsix = Get-ChildItem -Path (Join-Path $env:GITHUB_WORKSPACE 'artifacts') -Recurse -Filter *.vsix -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if (-not $foundVsix) { throw "VSIX not found: $vsixPath" }
+            $vsixPath = $foundVsix.FullName
           }
 
-          # 同步运行 iexpress 并记录退出码（/Q 静默模式下失败无输出，退出码是唯一线索）。
-          $proc = Start-Process -FilePath "$env:SystemRoot\System32\iexpress.exe" `
-            -ArgumentList "/N /Q `"$sedPath`"" -WindowStyle Hidden -PassThru -Wait
-          Write-Host "iexpress exit code: $($proc.ExitCode)"
+          $exePath = Join-Path $env:RUNNER_TEMP "$($manifest.name)-$($manifest.version)-Setup-Windows.exe"
 
-          # 产物落点兜底：iexpress 可能将 EXE 写入当前目录或 SED 所在目录之外的路径。
-          $found = Get-ChildItem -Path $env:RUNNER_TEMP, $env:GITHUB_WORKSPACE -Recurse `
-            -Filter "*-Setup-Windows.exe" -ErrorAction SilentlyContinue |
-            Select-Object -First 1
-          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf) -and $found) {
+          # 安装器逻辑（VS Code 探测 / 安装 / 校验 / 引导下载）沉淀在仓库脚本中，本地与 CI 同源
+          & pwsh -NoProfile -File tools/release/build-windows-installer.ps1 `
+            -VsixPath $vsixPath `
+            -OutPath $exePath `
+            -ProjectRoot $env:GITHUB_WORKSPACE
+
+          # 产物落点兜底：iexpress 可能将 EXE 写入预期之外的路径。
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            $found = Get-ChildItem -Path $env:RUNNER_TEMP -Recurse `
+              -Filter "*-Setup-Windows.exe" -ErrorAction SilentlyContinue |
+              Sort-Object LastWriteTime -Descending | Select-Object -First 1
+            if (-not $found) {
+              Write-Host "=== EXE files under RUNNER_TEMP (for diagnosis) ==="
+              Get-ChildItem -Path $env:RUNNER_TEMP -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
+                ForEach-Object { Write-Host $_.FullName }
+              throw "Windows EXE installer was not created: $exePath"
+            }
             Write-Host "EXE found at $($found.FullName), moving to $exePath"
             Move-Item -LiteralPath $found.FullName -Destination $exePath -Force
           }
 
-          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-            Write-Host "=== SED content (for diagnosis) ==="
-            Get-Content -LiteralPath $sedPath | Write-Host
-            Write-Host "=== EXE files under RUNNER_TEMP (for diagnosis) ==="
-            Get-ChildItem -Path $env:RUNNER_TEMP -Filter "*.exe" -Recurse -ErrorAction SilentlyContinue |
-              ForEach-Object { Write-Host $_.FullName }
-            throw "Windows EXE installer was not created: $exePath (iexpress exit code: $($proc.ExitCode))"
-          }
           # 等待文件写入完成（大小稳定）
           $lastSize = -1
           for ($i = 0; $i -lt 30; $i++) {
@@ -259,7 +229,7 @@ jobs:
             Start-Sleep -Seconds 2
           }
 
-          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "exe_path=$exePath" -Encoding utf8
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "exe_path=$exePath" -Encoding ascii
 
       - name: 上传 VSIX 产物
         if: runner.os == 'Windows'

@@ -82,12 +82,14 @@ export function loadPakIndex(wsRoot: string): {
     const pakMap = new Map<number, string>();
     const pakList: PakIndexEntry[] = [];
     for (let i = 0; i < lines.length; i++) {
-      const configuredName = lines[i].trim().replace(/[\\/]+/g, path.sep);
-      const rawExtension = path.extname(configuredName).slice(1).toLowerCase();
+      // EffectImageList.txt 由 Windows 客户端写出：反斜杠是路径分隔符，
+      // 先归一为正斜杠再按 POSIX 语义取扩展名与文件名，保证跨宿主一致。
+      const configuredName = lines[i].trim().replace(/[\\/]+/g, '/');
+      const rawExtension = path.posix.extname(configuredName).slice(1).toLowerCase();
       const extension = /^(?:pak|jpk|wil|wzl)$/.test(rawExtension)
         ? rawExtension as ArchiveExtension
         : undefined;
-      const name = path.basename(configuredName).replace(/\.(?:pak|jpk|wil|wzl)$/i, '');
+      const name = path.posix.basename(configuredName).replace(/\.(?:pak|jpk|wil|wzl)$/i, '');
       if (name) {
         pakMap.set(i, name);
         pakList.push({ name, willIdx: i, extension });

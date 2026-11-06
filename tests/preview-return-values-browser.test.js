@@ -57,7 +57,7 @@ for (const [index, executable] of candidates.entries()) {
     '--window-size=1440,1000', '--virtual-time-budget=5000', '--dump-dom', '--user-data-dir=' + path.join(out, 'profile-' + index),
     '--screenshot=' + path.join(out, 'preview.png'), pathToFileURL(file).href], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
   const dom = result.stdout || '';
-  const version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+  const version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout?.trim()||'<unknown>';
   attempts.push({ executable, version, status: result.status, error: String(result.error || ''), diagnostic: dom.match(/data-error="[^"]*"/)?.[0] });
   fs.writeFileSync(path.join(out, 'attempts.json'), JSON.stringify(attempts, null, 2)); fs.writeFileSync(path.join(out, 'dom-' + index + '.html'), dom);
   if (result.status === 0 && dom.includes('data-return-values="PASS"')) {

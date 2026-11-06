@@ -167,7 +167,8 @@ function readPakIndex(folder: string): Map<number, string> {
     const text = readFileGBK(new Uint8Array(buf));
     const lines = text.split(/\n/).map((l: string) => l.trim()).filter((l: string) => l.length > 0);
     for (let i = 0; i < lines.length; i++) {
-      const configuredName = lines[i].trim().replace(/[\\/]+/g, path.sep);
+      // EffectImageList.txt 由 Windows 客户端写出：反斜杠为路径分隔符。
+      const configuredName = lines[i].trim().replace(/[\\/]+/g, '/');
       const name = path.basename(configuredName).replace(/\.(?:pak|jpk|wil|wzl)$/i, '');
       if (name) map.set(i, name);
     }

@@ -71,7 +71,7 @@ window.addEventListener('load',async()=>{try{
   assert.ok(candidates.length, 'Chromium required'); const attempts = [];
   for (const [index, executable] of candidates.entries()) {
     const result = spawnSync(executable, ['--headless=new', '--disable-gpu', '--no-first-run', '--allow-file-access-from-files', '--window-size=1440,1000', '--virtual-time-budget=5000', '--dump-dom', '--user-data-dir=' + path.join(out, 'profile-' + index), '--screenshot=' + path.join(out, 'preview-' + index + '.png'), pathToFileURL(file).href], { encoding: 'utf8', windowsHide: true, timeout: 30000, maxBuffer: 16 * 1024 * 1024 });
-    const dom = result.stdout || '', version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout.trim();
+    const dom = result.stdout || '', version = spawnSync('powershell.exe', ['-NoProfile', '-Command', `(Get-Item -LiteralPath '${executable.replace(/'/g, "''")}').VersionInfo.ProductVersion`], { encoding: 'utf8', windowsHide: true }).stdout?.trim()||'<unknown>';
     attempts.push({ executable, version, status: result.status, error: String(result.error || ''), diagnostic: dom.match(/data-error="[^"]*"/)?.[0], pass: result.status === 0 && dom.includes('data-client-legacy="PASS"') });
     fs.writeFileSync(path.join(out, 'attempts.json'), JSON.stringify(attempts, null, 2)); fs.writeFileSync(path.join(out, 'dom-' + index + '.html'), dom);
     if (attempts.at(-1).pass) { console.log('preview-client-legacy-browser.test.js: PASS ' + executable + ' version=' + version + ' elements=' + (dom.match(/class="canvas-element\b/g) || []).length); return; }

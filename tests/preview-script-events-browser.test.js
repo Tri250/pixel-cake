@@ -60,7 +60,7 @@ const candidates=[...new Set([process.env.BOO_BROWSER_EXECUTABLE,'C:/Program Fil
 assert.ok(candidates.length,'installed Chromium required for the external event gate');
 for(const [index,executable]of candidates.entries()){
  const result=spawnSync(executable,['--headless=new','--disable-gpu','--no-first-run','--allow-file-access-from-files','--window-size=1440,1050','--virtual-time-budget=10000','--dump-dom',`--user-data-dir=${path.join(out,'profile-'+index)}`,`--screenshot=${path.join(out,'preview-'+index+'.png')}`,pathToFileURL(file).href],{encoding:'utf8',windowsHide:true,timeout:30000,maxBuffer:16*1024*1024});
- const version=spawnSync('powershell.exe',['-NoProfile','-Command',`(Get-Item -LiteralPath '${executable.replace(/'/g,"''")}').VersionInfo.ProductVersion`],{encoding:'utf8',windowsHide:true}).stdout.trim();
+ const version=spawnSync('powershell.exe',['-NoProfile','-Command',`(Get-Item -LiteralPath '${executable.replace(/'/g,"''")}').VersionInfo.ProductVersion`],{encoding:'utf8',windowsHide:true}).stdout?.trim()||'<unknown>';
  const dom=result.stdout||'',elementCount=(dom.match(/class="canvas-element\b/g)||[]).length;
  attempts.push({executable,version,elementCount,status:result.status,passed:result.status===0&&dom.includes('data-script-events="PASS"'),error:String(result.error||''),diagnostic:dom.match(/data-error="[^"]*"/)?.[0],stderr:(result.stderr||'').slice(-2500)});
  fs.writeFileSync(path.join(out,'attempts.json'),JSON.stringify(attempts,null,2));fs.writeFileSync(path.join(out,'dom-'+index+'.html'),dom);

@@ -451,8 +451,10 @@ export class ScriptDataResolver {
     if (!rawPath || /<\$/i.test(rawPath)) return undefined;
     const envirRoot = findAncestorDirectory(sourceFile, 'Envir');
     if (!envirRoot) return undefined;
-    const relativePath = stripQuotes(rawPath);
-    const withoutParentPrefix = relativePath.replace(/^(?:\.\.[\\/])+/, '');
+    // 脚本中的数据文件路径以反斜杠书写；POSIX 的 path.resolve 不把 "\" 当分隔符，
+    // 统一归一为正斜杠，保证 Windows 与 Linux/macOS 解析一致。
+    const relativePath = stripQuotes(rawPath).replace(/[\\/]+/g, '/');
+    const withoutParentPrefix = relativePath.replace(/^(?:\.\.\/)+/, '');
     const candidates = path.isAbsolute(relativePath)
       ? [path.resolve(relativePath)]
       : [

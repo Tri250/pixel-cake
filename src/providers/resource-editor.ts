@@ -350,7 +350,14 @@ export class ResourceEditorProvider implements vscode.Disposable {
     this.post(entry, { type: 'busy', busy: true });
     try {
       if (message.type === 'beginEdit') {
-        if (entry.editClient || !this.editEligible(entry)) return;
+        if (entry.editClient) return;
+        if (!this.editEligible(entry)) {
+          // 成对资源组的原子发布依赖 Windows 语义；其他平台明确告知原因，而不是静默无响应。
+          if (process.platform !== 'win32' && (entry.summary.format === 'WIL' || entry.summary.format === 'WZL')) {
+            throw new EditWorkerError('PAIR_WINDOWS_ONLY');
+          }
+          return;
+        }
         this.current(entry);
         const pair = entry.summary.format === 'WIL' || entry.summary.format === 'WZL';
         let password = pair ? '' : entry.password;

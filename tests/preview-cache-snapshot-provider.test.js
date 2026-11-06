@@ -98,8 +98,11 @@ async function main() {
   const { __NpcDialogVisualEditorManager: Manager } = loadProviderInternals();
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-preview-cache-snapshot-'));
   const originalLocalAppData = process.env.LOCALAPPDATA;
+  const originalXdgCacheHome = process.env.XDG_CACHE_HOME;
   try {
     process.env.LOCALAPPDATA = path.join(root, 'local');
+    // POSIX 下缓存根由 XDG_CACHE_HOME 决定，按平台注入对应变量以对齐缓存根断言。
+    if (process.platform !== 'win32') process.env.XDG_CACHE_HOME = process.env.LOCALAPPDATA;
     const sourceFile = path.join(root, 'workspace', 'dialog.txt');
     const dataRoot = path.join(root, 'client', 'Data');
     fs.mkdirSync(path.dirname(sourceFile), { recursive: true });
@@ -192,6 +195,8 @@ async function main() {
   } finally {
     if (originalLocalAppData === undefined) delete process.env.LOCALAPPDATA;
     else process.env.LOCALAPPDATA = originalLocalAppData;
+    if (originalXdgCacheHome === undefined) delete process.env.XDG_CACHE_HOME;
+    else process.env.XDG_CACHE_HOME = originalXdgCacheHome;
     fs.rmSync(root, { recursive: true, force: true });
   }
   console.log('preview-cache-snapshot-provider.test.js: PASS');

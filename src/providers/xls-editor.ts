@@ -77,8 +77,23 @@ export class XlsEditorProvider implements vscode.CustomEditorProvider<XlsDocumen
 
   constructor(private readonly context: vscode.ExtensionContext) {}
 
-  async openCustomDocument(uri: vscode.Uri): Promise<XlsDocument> {
-    return new XlsDocument(uri, await vscode.workspace.fs.readFile(uri));
+  async openCustomDocument(
+    uri: vscode.Uri,
+    openContext: vscode.CustomDocumentOpenContext
+  ): Promise<XlsDocument> {
+    // 热退出恢复：VS Code 在备份存在时传入 backupId，必须从备份读取，
+    // 否则上次会话未保存的修改会被磁盘上的旧内容静默替换（RD04）。
+    let data: Uint8Array;
+    if (openContext?.backupId) {
+      try {
+        data = await vscode.workspace.fs.readFile(vscode.Uri.parse(openContext.backupId));
+      } catch {
+        data = await vscode.workspace.fs.readFile(uri);
+      }
+    } else {
+      data = await vscode.workspace.fs.readFile(uri);
+    }
+    return new XlsDocument(uri, data);
   }
 
   async resolveCustomEditor(document: XlsDocument, panel: vscode.WebviewPanel): Promise<void> {

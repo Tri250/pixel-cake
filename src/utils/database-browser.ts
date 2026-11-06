@@ -167,7 +167,7 @@ export class DatabaseRequestCancelledError extends Error {
 export class DatabaseBrowserSession {
   private catalog: DatabaseCatalog | undefined;
   private readonly sources = new Map<string, TableSource>();
-  private activeSqlite: { filePath: string; database: SqlDatabase } | undefined;
+  private activeSqlite: { filePath: string; database: SqlDatabase; loadedSha256: string } | undefined;
   private readonly accessSessions = new Map<string, AccessDatabaseSession>();
   private disposed = false;
   private readonly sourceIdentity = crypto.randomBytes(8).toString('hex');
@@ -773,6 +773,12 @@ export class DatabaseBrowserSession {
     mutation: (database: SqlDatabase) => void
   ): Promise<string> {
     const database = await this.getActiveSqlite(source.filePath);
+    // 外部修改检测：内存库基于加载时的文件快照，落盘前必须确认磁盘内容未被
+    // 其他程序（运行中的 M2、第二个编辑器）改写，否则旧快照会静默覆盖外部修改。
+    if (this.activeSqlite?.database === database
+      && fileSha256(source.filePath) !== this.activeSqlite.loadedSha256) {
+      throw new Error('数据库文件已被外部修改，为避免覆盖其他程序的写入，本次保存已取消；请刷新数据库后重新修改');
+    }
     const backupPath = createDatabaseBackup(source.filePath);
     let exported: Uint8Array;
     try {
@@ -836,8 +842,13 @@ export class DatabaseBrowserSession {
     if (this.activeSqlite?.filePath === filePath) return this.activeSqlite.database;
     this.releaseActive();
     const SQL = await getSqlModule();
-    const database = new SQL.Database(fs.readFileSync(filePath));
-    this.activeSqlite = { filePath, database };
+    const buffer = fs.readFileSync(filePath);
+    const database = new SQL.Database(buffer);
+    this.activeSqlite = {
+      filePath,
+      database,
+      loadedSha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+    };
     return database;
   }
 

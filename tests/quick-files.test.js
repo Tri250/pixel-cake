@@ -1,6 +1,14 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 
+// quick-files 的候选路径以 Windows 工作区为语义书写；POSIX 宿主上用等价的
+// POSIX 根路径复跑同一组断言，保证 Linux/macOS 上覆盖不丢失。
+const isWindows = process.platform === 'win32';
+const serverRoot = isWindows ? 'D:\\MirServer' : '/srv/MirServer';
+const pcRoot = isWindows ? 'D:\\996PC' : '/srv/996PC';
+const nestedRoot = isWindows ? 'D:\\996PC\\Mirserver' : path.join(pcRoot, 'Mirserver');
+const siblingRoot = isWindows ? 'D:\\MirServer翎风' : '/srv/MirServer翎风';
+
 function main() {
   const {
     buildQuickFileCandidates,
@@ -38,33 +46,33 @@ function main() {
     path.join('Mir200', 'Envir', 'MapQuest_Def', 'QManage.txt')
   );
   const fromActiveDocument = buildQuickFileCandidates(
-    'D:\\MirServer',
-    'D:\\MirServer',
-    'D:\\MirServer\\Mir200\\Envir\\QuestDiary\\test.txt',
+    serverRoot,
+    serverRoot,
+    path.join(serverRoot, 'Mir200', 'Envir', 'QuestDiary', 'test.txt'),
     qManage
   );
   assert.equal(
     fromActiveDocument[0],
-    path.resolve('D:\\MirServer\\Mir200\\Envir\\MapQuest_Def\\QManage.txt')
+    path.resolve(path.join(serverRoot, 'Mir200', 'Envir', 'MapQuest_Def', 'QManage.txt'))
   );
   assert.equal(
-    findEnvirRootForPath('D:\\MirServer\\Mir200\\Envir\\QuestDiary\\一级\\二级\\按钮.txt'),
-    path.resolve('D:\\MirServer\\Mir200\\Envir')
+    findEnvirRootForPath(path.join(serverRoot, 'Mir200', 'Envir', 'QuestDiary', '一级', '二级', '按钮.txt')),
+    path.resolve(path.join(serverRoot, 'Mir200', 'Envir'))
   );
   assert.equal(
-    findEnvirRootForPath('D:\\MirServer\\登录器\\按钮.txt'),
+    findEnvirRootForPath(path.join(serverRoot, '登录器', '按钮.txt')),
     undefined,
     'paths outside Envir must not acquire a cross-server fallback boundary'
   );
 
-  const questDiaryRoot = path.resolve('D:\\MirServer\\Mir200\\Envir\\QuestDiary');
+  const questDiaryRoot = path.resolve(path.join(serverRoot, 'Mir200', 'Envir', 'QuestDiary'));
   const mergedQuestDiaryFiles = mergeQuestDiaryTextFileCandidates(
     questDiaryRoot,
     [
       path.join(questDiaryRoot, '按钮10.txt'),
       path.join(questDiaryRoot, '一级', '二级', '按钮2.TXT'),
       path.join(questDiaryRoot, '一级', '配置.ini'),
-      path.resolve('D:\\MirServer翎风\\Mir200\\Envir\\QuestDiary\\越界.txt'),
+      path.resolve(path.join(siblingRoot, 'Mir200', 'Envir', 'QuestDiary', '越界.txt')),
     ],
     [
       path.join(questDiaryRoot, '一级', '二级', '按钮2.TXT'),
@@ -79,13 +87,13 @@ function main() {
 
   const robotManage = QUICK_FILE_DEFINITIONS.at(-1);
   const nestedServer = buildQuickFileCandidates(
-    'D:\\996PC',
-    'D:\\996PC\\Mirserver',
+    pcRoot,
+    nestedRoot,
     undefined,
     robotManage
   );
   assert.ok(nestedServer.some(candidate => candidate === path.resolve(
-    'D:\\996PC\\Mirserver\\Mir200\\Envir\\Robot_def\\RobotManage.txt'
+    path.join(nestedRoot, 'Mir200', 'Envir', 'Robot_def', 'RobotManage.txt')
   )));
 
   assert.equal(
@@ -96,7 +104,7 @@ function main() {
     normalizeMir200RelativePath('"Mir200\\Envir\\QuestDiary\\测试.txt"'),
     'Envir/QuestDiary/测试.txt'
   );
-  assert.match(customQuickFilePathError('D:\\MirServer\\Mir200\\Envir\\测试.txt'), /相对于 Mir200/);
+  assert.match(customQuickFilePathError(path.join(serverRoot, 'Mir200', 'Envir', '测试.txt')), /相对于 Mir200/);
   assert.match(customQuickFilePathError('Envir\\..\\..\\测试.txt'), /不能使用 \.\./);
   assert.equal(normalizeMir200RelativePath('Envir\\QuestDiary\\'), undefined);
   assert.deepEqual(
@@ -116,14 +124,14 @@ function main() {
     path.join('Mir200', 'Envir', 'QuestDiary', '功能脚本', '测试.txt')
   );
   const customCandidates = buildQuickFileCandidates(
-    'D:\\MirServer',
-    'D:\\MirServer',
-    'D:\\MirServer\\Mir200\\Envir\\Market_Def\\当前.txt',
+    serverRoot,
+    serverRoot,
+    path.join(serverRoot, 'Mir200', 'Envir', 'Market_Def', '当前.txt'),
     custom
   );
   assert.equal(
     customCandidates[0],
-    path.resolve('D:\\MirServer\\Mir200\\Envir\\QuestDiary\\功能脚本\\测试.txt')
+    path.resolve(path.join(serverRoot, 'Mir200', 'Envir', 'QuestDiary', '功能脚本', '测试.txt'))
   );
 
   const manifest = require('../package.json');

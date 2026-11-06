@@ -8,6 +8,9 @@ const DOC_SELECTOR: vscode.DocumentSelector = [
 export function registerFoldingProvider(context: vscode.ExtensionContext): void {
   const provider = vscode.languages.registerFoldingRangeProvider(DOC_SELECTOR, {
     provideFoldingRanges(document) {
+      if (!vscode.workspace.getConfiguration('boo', document.uri).get('enableFolding', true)) {
+        return [];
+      }
       const ranges: vscode.FoldingRange[] = [];
       const lines: string[] = [];
       for (let li = 0; li < document.lineCount; li++) lines.push(document.lineAt(li).text);

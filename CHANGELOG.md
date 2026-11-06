@@ -2,6 +2,27 @@
 
 本文件记录 BOO 可视化编辑器面向用户的重要变化。完整实现与验证细节以仓库提交、自动回归和 `docs/reports/` 中的专项报告为准。
 
+## V4.4.2 - 2026-11-06
+
+- 打包与安装链路修复：`.vscodeignore` 补齐冻结运行时与 VC++ Runtime 许可证白名单、README 与 CHANGELOG 锚定；打包后依赖校验脚本的许可证/README 文件名与真实产物对齐，`verify:packaged-dependencies` 通过。
+- `xlsx` 依赖改为仓库内 vendor tarball（`tools/vendor/xlsx-0.20.3.tgz`），`npm ci` 不再依赖外部 CDN，离线和 CI 环境均可复现构建。
+- 市场元数据完善：补充 `capabilities.untrustedWorkspaces`、`extensionKind: ["ui"]`、51 条命令的 `onCommand` 激活事件、`keywords`、`qna` 与 `galleryBanner`；移除安装时强制捆绑第三方语言包与图标包的 `extensionPack`。
+- 数据安全修复：写入工作区编码设置改用 Configuration API，不再 JSONC 解析重写 `.vscode/settings.json`；数据库 SQLite 普通保存新增外部修改检测，磁盘内容被其他程序改写时拒绝覆盖；区服同步目标侧增加逐级 realpath 围栏，符号链接/目录联接无法把写入重定向到目标根之外。
+- 配置项接线：`boo.enableFolding`、`boo.enableCodeLens`、`boo.completionCase`、`boo.diagnosticSeverity` 四项此前只声明未生效的配置现已生效。
+- 修复 NPC/条件/兑换/升级/CALL/变量六个代码模板的 Snippet 占位符语法（`{1:}` → `${1:}`），Tab 跳转恢复可用。
+- Windows EXE 安装程序：安装逻辑沉淀为仓库脚本 `tools/release/installer/install-boo.ps1` 与 `tools/release/build-windows-installer.ps1`（`npm run package:exe` 本地可构建），自动探测本机 VS Code（PATH/用户级/系统级/Insiders），以 `--force` 安装 VSIX 后校验安装结果；未检测到 VS Code 时引导下载并打开手动安装目录；发布工作流改为调用同一脚本，CI 与本地同源。
+- 跨平台路径解析修复：Pak.txt 密码匹配、EffectImageList 存档引用、地图标识路径与 `#CALL`/`#CALLEX` 脚本引用中的 Windows 反斜杠路径，在 Linux/macOS 上此前按本机语义解析导致失配或拼错目录，现统一按 Windows 语义处理，与 Windows 行为一致。
+- 非 Windows 平台对 WIL/WZL 成对资源组点击"开启编辑"时，明确提示该操作仅支持 Windows，不再静默无响应。
+
+## V4.4.1 - 2026-10-24
+
+- 发布工作流新增 Windows EXE 安装程序步骤：将 VSIX 经 IExpress 自解压打包为 `boo-ngom-editor-<版本>-Setup-Windows.exe`，作为发布资产上传；加固退出码检查与产物落点兜底。
+- 发布工作流新增 GitHub Release 自动创建步骤：上传 VSIX 与 Windows EXE，权限提升为 `contents: write`，与 tag 版本号联动。
+
+## V4.4.0 - 2026-10-22
+
+- 详见 [V4.4.0 发布记录](docs/releases/V4.4.0_RELEASE_20261022.md)。
+
 ## V4.3.9 - 2026-10-04
 
 - Ctrl+F12 补齐源码确定变量的绝对坐标 IMG 与 PLAYIMG 帧数投影，修正确定颜色仍残留动态警告的问题；用户临时输入、占位和运行时覆盖不获得素材权限。

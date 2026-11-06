@@ -1,4 +1,4 @@
-# BOO 可视化编辑器 V4.4.1
+# BOO 可视化编辑器 V4.4.2
 
 面向传奇 GM、版本制作人员和脚本开发者的 Visual Studio Code 扩展，将脚本编写、UI 制作、补丁资源编辑、数据库维护、地图预览和多区同步集中到一个工作环境中。
 
@@ -195,7 +195,26 @@
 
 ## 安装
 
-在 VS Code 扩展面板选择“…” → “从 VSIX 安装…”，选择取得的 BOO 安装包，然后重新加载窗口。源码构建与开发说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+### 方式一：Windows 安装程序（推荐）
+
+下载发布页的 `boo-ngom-editor-<版本>-Setup-Windows.exe`，双击运行。安装程序会自动探测本机 VS Code（PATH、用户级、系统级与 Insiders 安装），完成安装并校验结果；若未检测到 VS Code，会引导前往官网下载，并打开手动安装目录。安装完成后，在 VS Code 中按 `Ctrl+Shift+P` 执行 `Developer: Reload Window` 重新加载窗口。
+
+安装程序封装的 VSIX 已包含全部功能（冻结 Python 运行时、M2Reloader 原生组件、AccessBridge、数据与主题），不需要额外组件。
+
+### 方式二：手动安装 VSIX
+
+在 VS Code 扩展面板选择“…” → “从 VSIX 安装…”，选择取得的 `.vsix` 安装包，然后重新加载窗口。
+
+### 从源码构建
+
+```powershell
+npm ci
+npm run compile
+npm run package                                   # 生成 artifacts/releases/vscode-marketplace/*.vsix
+npm run package:exe                               # 基于 VSIX 生成 Windows EXE 安装程序（需 Windows + PowerShell）
+```
+
+源码构建与开发说明见 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
 打开传奇服务端根目录后，确认当前引擎，在“补丁管理”选择客户端及自定义补丁，再读取需求资源。按 `Ctrl+Shift+P` 搜索“BOO”可查看功能命令；数据库、变量列表、地图和 AI 助手也可从左侧活动栏进入。
 
