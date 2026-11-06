@@ -52,7 +52,11 @@ assert.deepEqual(REQUIRED_NPC_DIALOG_DYNAMIC_ENTRY_FILES, [
   'out/utils/archive-image-worker.js',
 ], 'the release verifier no longer protects the dynamically loaded Ctrl+F12 worker');
 
-const temporary = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-packaged-npc-dialog-contract-'));
+// macOS 的 os.tmpdir() 位于系统别名（/var → /private/var）之下，而打包闭包
+// 校验以 realpath（require.resolve 默认解析符号链接）比较包含关系；夹具必须
+// 创建在真实路径下，避免把系统别名误判为越界访问。
+const temporaryRoot = fs.realpathSync(os.tmpdir());
+const temporary = fs.mkdtempSync(path.join(temporaryRoot, 'boo-packaged-npc-dialog-contract-'));
 try {
   for (const relative of expectedFiles) {
     const absolute = path.join(temporary, ...relative.split('/'));
@@ -78,7 +82,7 @@ try {
   removeTemporaryDirectory(temporary);
 }
 
-const closureFixture = fs.mkdtempSync(path.join(os.tmpdir(), 'boo-packaged-npc-dialog-closure-'));
+const closureFixture = fs.mkdtempSync(path.join(temporaryRoot, 'boo-packaged-npc-dialog-closure-'));
 try {
   const writeFixture = (relative, content) => {
     const absolute = path.join(closureFixture, ...relative.split('/'));
