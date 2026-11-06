@@ -66,6 +66,11 @@ function inspectPath(workspaceRoot: string, target: string): PathSnapshot {
     current = path.join(current, part);
     names.push(current);
   }
+  // 工作区根是信任锚点：只拒绝根目录组件本身是符号链接；其拼写允许经过系统别名
+  // （macOS 临时目录 /var → /private/var 等），不能把这类别名误判为重定向攻击面。
+  // 子路径以根的真实路径为基准做逐级 realpath 围栏，任何根下的重定向仍然被拒绝。
+  const realRoot = fs.realpathSync(workspaceRoot);
+  const relativeSegments = relative.split(path.sep);
   for (let index = 0; index < names.length; index++) {
     const filePath = names[index];
     let stat: fs.Stats;
@@ -74,7 +79,9 @@ function inspectPath(workspaceRoot: string, target: string): PathSnapshot {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT' && index > 0) return { entries };
       throw error;
     }
-    if (stat.isSymbolicLink() || pathKey(fs.realpathSync(filePath)) !== pathKey(filePath)) {
+    const expectedRealPath = index === 0 ? realRoot
+      : path.join(realRoot, relativeSegments.slice(0, index).join(path.sep));
+    if (stat.isSymbolicLink() || pathKey(fs.realpathSync(filePath)) !== pathKey(expectedRealPath)) {
       throw new Error('不读取符号链接、目录联接或重定向路径');
     }
     if (index < names.length - 1 && !stat.isDirectory()) throw new Error('脚本父路径不是目录');

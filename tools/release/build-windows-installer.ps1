@@ -110,7 +110,7 @@ try {
     "SourceFiles0=`"$srcDir\`"",
     '',
     '[SourceFiles]',
-    "SourceFiles0=`"$srcDir\%`"",
+    "SourceFiles0=`"$srcDir\`"",
     '',
     '[SourceFiles0]',
     "%FILE0%=$vsixName",

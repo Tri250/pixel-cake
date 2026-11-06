@@ -2,6 +2,12 @@
 
 本文件记录 BOO 可视化编辑器面向用户的重要变化。完整实现与验证细节以仓库提交、自动回归和 `docs/reports/` 中的专项报告为准。
 
+## V4.4.3 - 2026-11-07
+
+- 发布链路修复：Windows EXE 安装程序此前在 IExpress 打包阶段必然失败（SED `[SourceFiles]` 分节误写 `...\%` 指向不存在的目录，iexpress 立即以退出码 1 终止且无输出），修正后 CI 可完整产出 VSIX + EXE 安装器并自动创建 GitHub Release。
+- 跨平台兼容性修复：NPC 对话预览的脚本源读取围栏此前把工作区根路径拼写与 realpath 逐字比较，macOS 系统别名（`/var` → `/private/var`）会把整个临时目录/合法工作区误判为符号链接重定向，导致 Defines/QuestDiary 外部脚本一律拒绝读取（CI macOS 矩阵 18 项回归失败）；现在以工作区根的真实路径为基准做子路径围栏，根组件本身是符号链接时仍然拒绝，围栏安全语义不变。
+- 安装/卸载与权限审查：安装器与卸载器均为用户级操作（不要求管理员），探测 PATH/用户级/系统级/Insiders 的 VS Code CLI，安装与卸载后均用 `--list-extensions` 双向校验；webview 统一 CSP + nonce、扩展声明 `untrustedWorkspaces: limited` 与受限配置清单、`deactivate` 释放助手与 M2 重载资源，审查通过。
+
 ## V4.4.2 - 2026-11-06
 
 - 打包与安装链路修复：`.vscodeignore` 补齐冻结运行时与 VC++ Runtime 许可证白名单、README 与 CHANGELOG 锚定；打包后依赖校验脚本的许可证/README 文件名与真实产物对齐，`verify:packaged-dependencies` 通过；冻结 PAK 运行时校验在非 Windows 打包机上保留文件存在性与 PE 头检查、跳过仅 Windows 可执行的运行测试（由 Windows CI 完成）。

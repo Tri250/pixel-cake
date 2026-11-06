@@ -6,6 +6,11 @@ on:
     tags: ["v*"]
   workflow_dispatch: # 允许手动触发
 
+# 同一 ref 的重复触发（如快速连续推送）只保留一个排队/运行实例，避免并发构建互相踩踏
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: false
+
 permissions:
   contents: read
 
