@@ -103,49 +103,14 @@ try {
   & $sevenZip a -t7z $archivePath (Join-Path $srcDir '*') -mx=9 | Write-Host
   if ($LASTEXITCODE -ne 0) { throw "7z archive failed with exit code $LASTEXITCODE" }
 
-  # ---- 3. 7zSD SFX 模块：runner 预装的 7-Zip 不含 SFX 模块，从官网补充 ----
-  # （7zSD.sfx = 安装器 SFX：解压完成后按配置执行 RunProgram；下载官方
-  #   extra 包并递归定位 7zSD.sfx。多版本 URL 兜底，下载结果按需解压。）
-  $sfxModule = $null
-  $sfxLocalCandidates = @(
-    (Join-Path $env:ProgramFiles '7-Zip\7zSD.sfx'),
-    (Join-Path ${env:ProgramFiles(x86)} '7-Zip\7zSD.sfx')
-  )
-  $sfxModule = $sfxLocalCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
-  if (-not $sfxModule) {
-    $extraDir = Join-Path $stageRoot ("boo-7z-extra-" + [Guid]::NewGuid().ToString('N').Substring(0, 8))
-    New-Item -ItemType Directory -Path $extraDir -Force | Out-Null
-    try {
-      $extraUrls = @(
-        'https://www.7-zip.org/a/7z2501-extra.7z',
-        'https://www.7-zip.org/a/7z2409-extra.7z',
-        'https://www.7-zip.org/a/7z2408-extra.7z'
-      )
-      $extraPath = $null
-      foreach ($url in $extraUrls) {
-        try {
-          $extraPath = Join-Path $extraDir '7z-extra.7z'
-          Invoke-WebRequest -Uri $url -OutFile $extraPath -UseBasicParsing -TimeoutSec 120
-          Write-Host "Downloaded 7-Zip extra package: $url ($((Get-Item -LiteralPath $extraPath).Length) bytes)"
-          break
-        }
-        catch {
-          Write-Host "7-Zip extra package URL unavailable: $url ($($_.Exception.Message))"
-          $extraPath = $null
-        }
-      }
-      if (-not $extraPath) { throw 'Failed to download 7-Zip extra package (7zSD.sfx source)' }
-      & $sevenZip x $extraPath -o"$extraDir" -y | Write-Host
-      if ($LASTEXITCODE -ne 0) { throw "7z extract extra package failed with exit code $LASTEXITCODE" }
-      $sfxModule = (Get-ChildItem -Path $extraDir -Recurse -Filter '7zSD.sfx' -ErrorAction SilentlyContinue |
-        Sort-Object FullName -Descending | Select-Object -First 1).FullName
-      if (-not $sfxModule) { throw '7zSD.sfx not found inside downloaded extra package' }
-    }
-    finally {
-      if (Test-Path -LiteralPath $extraDir) {
-        Remove-Item -LiteralPath $extraDir -Recurse -Force -ErrorAction SilentlyContinue
-      }
-    }
+  # ---- 3. SFX 模块与安装配置 ----
+  # 现代 7-Zip（15.06+）的 7z.sfx 支持「安装器配置」（;!@Install@!UTF-8! ...
+  # RunProgram），取代了旧版的 7zSD.sfx（新版安装包已不再分发）。
+  # GUIMode=2：SFX 自身静默（无解压进度对话框），由 install-boo.cmd 的控制台
+  # 展示安装进度与结果。
+  $sfxModule = Join-Path (Split-Path -Parent $sevenZip) '7z.sfx'
+  if (-not (Test-Path -LiteralPath $sfxModule -PathType Leaf)) {
+    throw "7z.sfx (installer SFX module) not found next to 7z.exe: $sfxModule"
   }
   Write-Host "SFX module: $sfxModule"
 
@@ -153,8 +118,8 @@ try {
   $configLines = @(
     ';!@Install@!UTF-8!',
     'Title="BOO Visual Editor Setup"',
-    'BeginPrompt="0"',
     'RunProgram="install-boo.cmd"',
+    'GUIMode="2"',
     ';!@InstallEnd@!'
   )
   [System.IO.File]::WriteAllText(

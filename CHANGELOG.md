@@ -4,7 +4,7 @@
 
 ## V4.4.3 - 2026-11-07
 
-- 发布链路修复：Windows EXE 安装程序改用 7-Zip 安装器 SFX 模块（7zSD.sfx + 配置 + 7z 归档拼接）打包——IExpress 在 GitHub windows-latest 无头 runner 上必然静默失败（退出码 1，与 SED 格式无关：其 GUI 子系统/LOLBin 属性导致，六轮 SED 迭代均复现），弃用后 CI 可完整产出 VSIX + EXE 安装器并自动创建 GitHub Release；安装/卸载交互与校验逻辑保持不变。
+- 发布链路修复：Windows EXE 安装程序改用 7-Zip SFX 安装器模块（7z.sfx + 安装配置 + 7z 归档拼接，解压后自动执行 install-boo.cmd）——IExpress 在 GitHub windows-latest 无头 runner 上必然静默失败（退出码 1，与 SED 格式无关：其 GUI 子系统/LOLBin 属性导致，六轮 SED 迭代均复现），弃用后 CI 可完整产出 VSIX + EXE 安装器并自动创建 GitHub Release；安装/卸载交互与校验逻辑保持不变。
 - 跨平台兼容性修复：NPC 对话预览的脚本源读取围栏此前把工作区根路径拼写与 realpath 逐字比较，macOS 系统别名（`/var` → `/private/var`）会把整个临时目录/合法工作区误判为符号链接重定向，导致 Defines/QuestDiary 外部脚本一律拒绝读取（CI macOS 矩阵 18 项回归失败）；现在以工作区根的真实路径为基准做子路径围栏，根组件本身是符号链接时仍然拒绝，围栏安全语义不变。
 - 安装/卸载与权限审查：安装器与卸载器均为用户级操作（不要求管理员），探测 PATH/用户级/系统级/Insiders 的 VS Code CLI，安装与卸载后均用 `--list-extensions` 双向校验；webview 统一 CSP + nonce、扩展声明 `untrustedWorkspaces: limited` 与受限配置清单、`deactivate` 释放助手与 M2 重载资源，审查通过。
 - CI 稳定性加固：浏览器测试 harness 对 runner 冷启动抖动（杀毒扫描、端口/配置目录竞争、旧进程残留）按全新 profile 目录自动重试（仅启动类失败，不掩盖真实回归）；地图切片 dump-dom 场景在 Chrome 15x/macOS 虚拟时间竞态下按全新 profile 重试并放宽预算；长文本几何断言为 macOS 字体垂直度量差异（约 1.2px，随缩放翻倍）引入垂直容差，水平几何保持 0.5px 严格校验。
