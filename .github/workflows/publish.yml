@@ -176,12 +176,73 @@ jobs:
             throw "Open VSX publish failed with exit code $LASTEXITCODE."
           }
 
+      - name: 打包 Windows EXE 安装程序（IExpress 自解压，运行后自动安装 VSIX）
+        if: runner.os == 'Windows'
+        id: exe
+        shell: pwsh
+        env:
+          VSIX_PATH: ${{ steps.package.outputs.vsix_path }}
+        run: |
+          $ErrorActionPreference = 'Stop'
+
+          $packageJson = Join-Path $env:GITHUB_WORKSPACE 'package.json'
+          $manifest = Get-Content -LiteralPath $packageJson -Raw | ConvertFrom-Json
+          $vsixName = "$($manifest.name)-$($manifest.version).vsix"
+
+          $srcDir = Join-Path $env:RUNNER_TEMP 'sfx-src'
+          New-Item -ItemType Directory -Path $srcDir -Force | Out-Null
+          Copy-Item -LiteralPath $env:VSIX_PATH -Destination (Join-Path $srcDir $vsixName) -Force
+
+          $exePath = Join-Path $env:RUNNER_TEMP "$($manifest.name)-$($manifest.version)-Setup-Windows.exe"
+          $sedPath = Join-Path $env:RUNNER_TEMP 'setup.sed'
+
+          # IExpress SED：自解压并静默执行 code --install-extension（code CLI 不在 PATH 时仅解压不报错阻断）
+          $sed = @"
+          [Version]
+          Class=IEXPRESS
+          SEDVersion=1
+          [Options]
+          PackagePurpose=InstallApp
+          ShowInstallProgramWindow=0
+          HideInstallProgramWindow=1
+          AppLaunched=cmd /c code --install-extension $vsixName
+          PostInstallCmd=<None>
+          AdminQuietInstCmd=<None>
+          UserQuietInstCmd=<None>
+          TargetName=$exePath
+          SourceFiles0=$srcDir\
+          [SourceFiles]
+          SourceFiles0=$srcDir\%
+          [SourceFiles0]
+          %FILE0%=
+          $vsixName=
+          "@
+
+          Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
+          & iexpress.exe /N /Q $sedPath
+          if ($LASTEXITCODE -ne 0) {
+            throw "IExpress packaging failed with exit code $LASTEXITCODE."
+          }
+          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            throw "Windows EXE installer was not created: $exePath"
+          }
+
+          Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "exe_path=$exePath" -Encoding utf8
+
       - name: 上传 VSIX 产物
         if: runner.os == 'Windows'
         uses: actions/upload-artifact@v7
         with:
           name: vsix
           path: ${{ steps.package.outputs.vsix_path }}
+          if-no-files-found: error
+
+      - name: 上传 Windows EXE 安装程序
+        if: runner.os == 'Windows'
+        uses: actions/upload-artifact@v7
+        with:
+          name: windows-installer-exe
+          path: ${{ steps.exe.outputs.exe_path }}
           if-no-files-found: error
 
       - name: 上传 M2Reloader 原生组件
@@ -206,6 +267,12 @@ jobs:
         uses: actions/download-artifact@v8
         with:
           name: vsix
+          path: dist
+
+      - name: 下载 Windows EXE 安装程序
+        uses: actions/download-artifact@v8
+        with:
+          name: windows-installer-exe
           path: dist
 
       - name: 下载 M2Reloader 原生组件
