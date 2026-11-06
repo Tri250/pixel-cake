@@ -317,22 +317,12 @@ async function copyFileForZoneSync(sourcePath: string, targetPath: string): Prom
   }
 }
 
-function resolveTargetPath(targetRoot: string, relativePath: string): string {
-  const resolvedRoot = path.resolve(targetRoot);
-  const targetPath = path.resolve(resolvedRoot, relativePath);
-  if (!isSameOrInside(targetPath, resolvedRoot)) {
-    throw new Error(`同步目标超出所选区服根目录: ${relativePath}`);
-  }
-  // 逐级 realpath 围栏：词法检查无法发现目录联接/junction/符号链接造成的重定向，
-  // 落盘前必须确认目标路径经 realpath 解析后仍在目标根之内。
-  let realRoot: string;
-  try {
-    realRoot = fs.realpathSync(resolvedRoot);
-  } catch {
-    realRoot = resolvedRoot; // 目标根尚未创建，交由后续 mkdir 建立
-  }
+function canonicalizeBelowExisting(target: string): string {
+  // 最近已存在祖先的真实路径 + 未创建段：目标根本身可能尚未创建，
+  // 两侧围栏必须落在同一真实命名空间（macOS /var → /private/var 等）。
+  const absolute = path.resolve(target);
   const pendingSegments: string[] = [];
-  let existing = targetPath;
+  let existing = absolute;
   while (!fs.existsSync(existing)) {
     const parent = path.dirname(existing);
     if (parent === existing) break;
@@ -345,8 +335,18 @@ function resolveTargetPath(targetRoot: string, relativePath: string): string {
   } catch {
     realExisting = existing;
   }
-  const realTarget = path.join(realExisting, ...pendingSegments);
-  if (!isSameOrInside(realTarget, realRoot)) {
+  return path.join(realExisting, ...pendingSegments);
+}
+
+function resolveTargetPath(targetRoot: string, relativePath: string): string {
+  const resolvedRoot = path.resolve(targetRoot);
+  const targetPath = path.resolve(resolvedRoot, relativePath);
+  if (!isSameOrInside(targetPath, resolvedRoot)) {
+    throw new Error(`同步目标超出所选区服根目录: ${relativePath}`);
+  }
+  // 逐级 realpath 围栏：词法检查无法发现目录联接/junction/符号链接造成的重定向，
+  // 落盘前必须确认目标路径与目标根经 realpath 解析后仍在同一真实目录之内。
+  if (!isSameOrInside(canonicalizeBelowExisting(targetPath), canonicalizeBelowExisting(resolvedRoot))) {
     throw new Error(`同步目标经符号链接解析后超出所选区服根目录: ${relativePath}`);
   }
   return targetPath;
