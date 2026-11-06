@@ -142,7 +142,8 @@ async function main() {
     assert.ok(!entry.disposed); assert.equal(entry.editClient, client);
     const target = path.join(root, 'new.jpk'); savePicker = async () => vscode.Uri.file(target);
     await send(entry, 'saveAs'); assert.ok(fs.existsSync(target)); assert.equal(entry.editInfo.dirty, false);
-    assert.equal(entry.summary.pakPath, target); assert.equal(entry.indexUnavailable, false);
+    // macOS 的 os.tmpdir() 返回 /var/... 而真实路径是 /private/var/...，Provider 会归一化为真实路径，两侧都按真实路径比较。
+    assert.equal(fs.realpathSync(entry.summary.pakPath), fs.realpathSync(target)); assert.equal(entry.indexUnavailable, false);
     assert.equal(state(entry).name, 'new.jpk'); assert.equal(digest(source), sourceHash);
     assert.equal(provider.panels.get(entry.summary.archiveId), entry);
     await send(entry, 'endEdit'); assert.equal(state(entry).editRevision, 0); assert.equal(state(entry).canExport, true);
@@ -152,7 +153,7 @@ async function main() {
     const second = path.join(root, 'new2.jpk'); savePicker = async () => vscode.Uri.file(second);
     archive.openArchiveIndexed = async () => { throw new Error('Injected index failure'); };
     await send(entry, 'saveAs'); archive.openArchiveIndexed = originalOpen;
-    assert.ok(fs.existsSync(second)); assert.equal(entry.indexUnavailable, true); assert.equal(entry.savedTarget, second);
+    assert.ok(fs.existsSync(second)); assert.equal(entry.indexUnavailable, true); assert.equal(fs.realpathSync(entry.savedTarget), fs.realpathSync(second));
     assert.equal(state(entry).name, 'new2.jpk'); assert.ok(state(entry).slots.filter(s => s.imageUrl).every(s => !s.imageUrl.includes('boo-archive')));
     assert.ok(entry.panel.messages.some(m => m.type === 'notice' && /索引重建失败/.test(m.text)));
     await send(entry, 'setOffsets', { index: 8, x: -24, y: 0 }); warning = async () => '放弃修改';

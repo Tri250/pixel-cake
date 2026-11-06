@@ -530,8 +530,12 @@ export class DatabaseBrowserSession {
     if (!fs.existsSync(entry.mutation.backupPath)) throw new Error('撤回备份已不存在');
 
     this.releaseActive();
-    // 指纹覆盖主库与 `-wal` 侧车：外部程序通过 WAL 提交的新数据同样视为外部修改。
-    if (sqliteStateSha256(entry.filePath) !== entry.postMutationSha256) {
+    // SQLite 指纹覆盖主库与 `-wal` 侧车：外部程序通过 WAL 提交的新数据同样视为外部修改；
+    // Access 撤回记录的是纯文件哈希，不能混用带侧车后缀的指纹，否则撤回永远失败。
+    const postMutationFingerprint = /\.mdb$/i.test(entry.filePath)
+      ? crypto.createHash('sha256').update(fs.readFileSync(entry.filePath)).digest('hex')
+      : sqliteStateSha256(entry.filePath);
+    if (postMutationFingerprint !== entry.postMutationSha256) {
       throw new Error('数据库已被其他程序修改，为避免覆盖外部数据，本次撤回已取消');
     }
 
