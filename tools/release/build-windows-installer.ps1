@@ -1,11 +1,14 @@
 #Requires -Version 5.1
 <#
 .SYNOPSIS
-  构建 BOO 可视化编辑器 Windows EXE 安装程序（IExpress 自解压，运行后自动安装 VSIX）。
+  构建 BOO 可视化编辑器 Windows EXE 安装程序（7-Zip SFX 自解压，运行后自动安装 VSIX）。
 
 .DESCRIPTION
   将 VSIX 与安装器载荷（tools/release/installer/install-boo.ps1）打包为单个自解压 EXE：
-    - 用户双击 EXE 后自动解压并执行 install-boo.ps1；
+    - 采用 7-Zip 安装器 SFX 模块（7zSD.sfx + 安装配置 + 7z 归档拼接）：
+      双击 EXE 解压后自动执行 install-boo.cmd；
+      （曾用 IExpress 打包：其 GUI 子系统与 LOLBin 属性在 GitHub windows-latest
+      无头 runner 上必然静默退出码 1，与 SED 格式无关，故弃用；）
     - 安装器探测本机 VS Code（PATH / 用户级 / 系统级 / Insiders），
       通过 code --install-extension --force 安装，并以 --list-extensions 校验；
     - 未检测到 VS Code 时引导官网下载并打开解压目录供手动安装；
@@ -87,113 +90,58 @@ try {
   ) -join "`r`n"
   Set-Content -LiteralPath (Join-Path $srcDir 'install-boo.cmd') -Value $bootstrap -Encoding ascii
 
-  # ---- 2. 生成 IExpress SED（向导原生 SEDVersion=3 格式；全部 ASCII）----
-  # 关键：IExpress 的 SED 解析器不剥离引号——TargetName/SourceFiles0 等值
-  # 一旦带引号会被当作路径字面量的一部分，打包立即静默失败（退出码 1）。
-  # 参考真实可用产物（mintty/wsltty makewinx.cfg）：全部值不加引号，
-  # [SourceFiles0] 直接列出字面文件名（空值）。路径含空格的场景不受支持。
-  # 注意：SED 解析器要求 CRLF 行尾。
-  $sedPath = Join-Path $stageRoot 'boo-setup.sed'
-  $sedLines = @(
-    '[Version]',
-    'Class=IExpress',
-    'SEDVersion=3',
-    '',
-    '[Options]',
-    'PackagePurpose=InstallApp',
-    'ShowInstallProgramWindow=0',
-    'HideExtractAnimation=0',
-    'UseLongFileName=1',
-    'InsideCompressed=0',
-    'CAB_FixedSize=0',
-    'CAB_ResvCodeSigning=0',
-    'RebootMode=N',
-    'InstallPrompt=%InstallPrompt%',
-    'DisplayLicense=%DisplayLicense%',
-    'FinishMessage=%FinishMessage%',
-    'TargetName=%TargetName%',
-    'FriendlyName=%FriendlyName%',
-    'AppLaunched=%AppLaunched%',
-    'PostInstallCmd=%PostInstallCmd%',
-    'AdminQuietInstCmd=%AdminQuietInstCmd%',
-    'UserQuietInstCmd=%UserQuietInstCmd%',
-    'SourceFiles=SourceFiles',
-    '',
-    '[Strings]',
-    'InstallPrompt=',
-    'DisplayLicense=',
-    'FinishMessage=',
-    ('TargetName=' + $OutPath),
-    'FriendlyName=BOO Visual Editor Setup',
-    'AppLaunched=cmd.exe /c install-boo.cmd',
-    'PostInstallCmd=<None>',
-    'AdminQuietInstCmd=',
-    'UserQuietInstCmd=',
-    '',
-    '[SourceFiles]',
-    ('SourceFiles0=' + (Join-Path $srcDir '')),
-    '',
-    '[SourceFiles0]',
-    ($vsixName + '='),
-    'install-boo.cmd=',
-    'install-boo.ps1='
+  # ---- 2. 7z 归档：载荷位于归档根（RunProgram 在解压根执行）----
+  $sevenZipCandidates = @(
+    (Join-Path $env:ProgramFiles '7-Zip\7z.exe'),
+    (Join-Path ${env:ProgramFiles(x86)} '7-Zip\7z.exe')
+  )
+  $sevenZip = $sevenZipCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+  if (-not $sevenZip) { $sevenZip = (Get-Command 7z.exe -ErrorAction SilentlyContinue).Source }
+  if (-not $sevenZip) { throw '7-Zip (7z.exe) not found: this script must run on Windows with 7-Zip installed' }
+
+  $archivePath = Join-Path $stageRoot ("boo-sfx-archive-" + [Guid]::NewGuid().ToString('N').Substring(0, 8) + '.7z')
+  & $sevenZip a -t7z $archivePath (Join-Path $srcDir '*') -mx=9 | Write-Host
+  if ($LASTEXITCODE -ne 0) { throw "7z archive failed with exit code $LASTEXITCODE" }
+
+  # ---- 3. 7zSD SFX 配置（UTF-8 无 BOM；解压完成后自动执行安装脚本）----
+  $sfxModule = Join-Path $env:ProgramFiles '7-Zip\7zSD.sfx'
+  if (-not (Test-Path -LiteralPath $sfxModule -PathType Leaf)) {
+    throw "7zSD.sfx (installer SFX module) not found: $sfxModule"
+  }
+  $configPath = Join-Path $stageRoot 'boo-sfx-config.txt'
+  $configLines = @(
+    ';!@Install@!UTF-8!',
+    'Title="BOO Visual Editor Setup"',
+    'BeginPrompt="0"',
+    'RunProgram="install-boo.cmd"',
+    ';!@InstallEnd@!'
   )
   [System.IO.File]::WriteAllText(
-    $sedPath,
-    (($sedLines -join "`r`n") + "`r`n"),
-    [System.Text.Encoding]::ASCII)
+    $configPath,
+    (($configLines -join "`r`n") + "`r`n"),
+    (New-Object System.Text.UTF8Encoding($false)))
 
-  # x86 iexpress（SysWOW64）：产物可在 x86/x64 Windows 通用运行，行为与向导一致；
-  # 64 位 iexpress 在部分系统上打包异常。缺失时回退 System32。
-  $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'SysWOW64\iexpress.exe' } else { $null }
-  if (-not $iexpress -or -not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {
-    $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\iexpress.exe' } else { $null }
-  }
-  if (-not $iexpress -or -not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {
-    throw "iexpress.exe not found (this script must run on Windows): $iexpress"
-  }
-
-  # ---- 3. 同步执行 iexpress（/Q 静默模式；捕获 stdout/stderr 作为唯一线索）----
-  $iexpressStdout = Join-Path $stageRoot 'iexpress-stdout.log'
-  $iexpressStderr = Join-Path $stageRoot 'iexpress-stderr.log'
-  $proc = Start-Process -FilePath $iexpress `
-    -ArgumentList "/N /Q `"$sedPath`"" `
-    -WindowStyle Hidden -PassThru -Wait `
-    -RedirectStandardOutput $iexpressStdout -RedirectStandardError $iexpressStderr
-  Write-Host "iexpress ($iexpress) exit code: $($proc.ExitCode)"
-  if ((Test-Path -LiteralPath $iexpressStdout) -and ((Get-Item -LiteralPath $iexpressStdout).Length -gt 0)) {
-    Write-Host '--- iexpress stdout ---'
-    Get-Content -LiteralPath $iexpressStdout | Write-Host
-  }
-  if ((Test-Path -LiteralPath $iexpressStderr) -and ((Get-Item -LiteralPath $iexpressStderr).Length -gt 0)) {
-    Write-Host '--- iexpress stderr ---'
-    Get-Content -LiteralPath $iexpressStderr | Write-Host
-  }
-
-  # ---- 4. 产物落点兜底：iexpress 可能把 EXE 写到其他路径 ----
-  if (-not (Test-Path -LiteralPath $OutPath -PathType Leaf)) {
-    $found = Get-ChildItem -Path $stageRoot, $ProjectRoot -Recurse -Filter '*-Setup-Windows.exe' -ErrorAction SilentlyContinue |
-      Sort-Object LastWriteTime -Descending |
-      Select-Object -First 1
-    if ($found) {
-      Write-Host "EXE found at $($found.FullName), moving to $OutPath"
-      Move-Item -LiteralPath $found.FullName -Destination $OutPath -Force
+  # ---- 4. 拼接：SFX 模块 + 配置 + 归档 → 单文件安装 EXE ----
+  $targetStream = [System.IO.File]::Create($OutPath)
+  try {
+    foreach ($part in @($sfxModule, $configPath, $archivePath)) {
+      $bytes = [System.IO.File]::ReadAllBytes($part)
+      $targetStream.Write($bytes, 0, $bytes.Length)
     }
   }
-
-  if (-not (Test-Path -LiteralPath $OutPath -PathType Leaf)) {
-    Write-Host '=== SED content (for diagnosis) ==='
-    Get-Content -LiteralPath $sedPath | Write-Host
-    throw "Windows EXE installer was not created: $OutPath (iexpress exit code: $($proc.ExitCode))"
-  }
+  finally { $targetStream.Dispose() }
 
   # ---- 5. 等待文件写入完成（大小稳定）----
   $lastSize = -1
-  for ($i = 0; $i -lt 30; $i++) {
+  for ($i = 0; $i -lt 15; $i++) {
     $size = (Get-Item -LiteralPath $OutPath).Length
     if ($size -eq $lastSize -and $size -gt 0) { break }
     $lastSize = $size
     Start-Sleep -Seconds 2
+  }
+
+  if ((Get-Item -LiteralPath $OutPath).Length -lt 4096) {
+    throw "Windows EXE installer suspiciously small: $OutPath ($((Get-Item -LiteralPath $OutPath).Length) bytes)"
   }
 
   Write-Host "Windows EXE installer ready: $OutPath ($((Get-Item -LiteralPath $OutPath).Length) bytes)"

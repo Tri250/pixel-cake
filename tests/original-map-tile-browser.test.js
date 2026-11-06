@@ -325,35 +325,41 @@ async function main() {
     html = html.replace('</body>', `${scenarioScript(singleCellData)}</body>`);
     fs.writeFileSync(harness, html, 'utf8');
 
-    const attempts = [];
+    const attempts=[];
     let selected;
-    for (let index = 0; index < candidates.length; index++) {
-      const result = spawnSync(candidates[index], [
-        '--headless=new',
-        '--disable-gpu',
-        '--disable-extensions',
-        '--disable-background-timer-throttling',
-        '--disable-renderer-backgrounding',
-        '--no-first-run',
-        '--allow-file-access-from-files',
-        '--force-device-scale-factor=1',
-        `--user-data-dir=${path.join(temporary, `profile-${index}`)}`,
-        '--window-size=1200,800',
-        '--virtual-time-budget=6500',
-        '--dump-dom',
-        pathToFileURL(harness).href,
-      ], {
-        encoding: 'utf8',
-        timeout: 25000,
-        maxBuffer: 8 * 1024 * 1024,
-      });
-      attempts.push({ candidate: candidates[index], result });
-      if (!result.error && result.status === 0
-        && /<body\b/i.test(result.stdout || '')
-        && /data-original-map-tile-test=/i.test(result.stdout || '')) {
-        selected = { candidate: candidates[index], result };
-        break;
+    const spawnBudget=40000, virtualBudget=12000, retriesPerBrowser=3;
+    for(let index=0;index<candidates.length;index++){
+      for(let attempt=0;attempt<retriesPerBrowser;attempt++){
+        // Chrome 15x 在 macOS 上偶发 dump-dom 早于异步场景把结果写回 DOM
+        // （CVDisplayLink/虚拟时间竞态）；换全新 profile 重试同一浏览器。
+        const result=spawnSync(candidates[index],[
+          '--headless=new',
+          '--disable-gpu',
+          '--disable-extensions',
+          '--disable-background-timer-throttling',
+          '--disable-renderer-backgrounding',
+          '--no-first-run',
+          '--allow-file-access-from-files',
+          '--force-device-scale-factor=1',
+          `--user-data-dir=${path.join(temporary,`profile-${index}-${attempt}`)}`,
+          '--window-size=1200,800',
+          `--virtual-time-budget=${virtualBudget}`,
+          '--dump-dom',
+          pathToFileURL(harness).href,
+        ],{
+          encoding:'utf8',
+          timeout:spawnBudget,
+          maxBuffer:8*1024*1024,
+        });
+        attempts.push({candidate:candidates[index],result});
+        if(!result.error&&result.status===0
+          &&/<body\b/i.test(result.stdout||'')
+          &&/data-original-map-tile-test=/i.test(result.stdout||'')){
+          selected={candidate:candidates[index],result};
+          break;
+        }
       }
+      if(selected)break;
     }
     assert.ok(
       selected,
