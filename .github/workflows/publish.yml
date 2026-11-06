@@ -214,8 +214,7 @@ jobs:
           [SourceFiles]
           SourceFiles0=$srcDir\%
           [SourceFiles0]
-          %FILE0%=
-          $vsixName=
+          %FILE0%=$vsixName
           "@
 
           Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
