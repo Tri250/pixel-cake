@@ -156,6 +156,14 @@ async function attemptChromiumDom(browser, htmlPath, profilePath) {
 // 非启动类失败（真实的页面断言错误）不重试，避免掩盖回归。
 const RETRYABLE_STARTUP = /^(Chromium (startup failed|browser endpoint does not match|browser identity mismatch|page endpoint mismatch|cleanup did not complete|scenario and cleanup failed)|CDP (connection failed|connection timeout|timeout |closed )|DOM test did not complete)/;
 
+// Chrome 退出后 crashpad 等子进程可能短暂持有 profile 内文件句柄（Windows
+// 上表现为 EBUSY），重试 profile 是一次性临时目录：用带重试的删除并容忍
+// 残留（下次重试使用全新目录，调用方的 temp-cleanup 自带 15s 重试兜底）。
+function disposeRetryProfile(profile) {
+  try { fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }); }
+  catch { /* 残留交由调用方的临时目录清理兜底，绝不让清理失败拖垮已通过的场景 */ }
+}
+
 async function runChromiumDom(browser, htmlPath, profilePath) {
   profilePath = path.resolve(profilePath);
   let primary;
@@ -163,13 +171,13 @@ async function runChromiumDom(browser, htmlPath, profilePath) {
     const profile = attempt === 0 ? profilePath : `${profilePath}-retry-${attempt}`;
     try {
       const dom = await attemptChromiumDom(browser, htmlPath, profile);
-      if (attempt > 0) fs.rmSync(profile, { recursive: true, force: true });
+      if (attempt > 0) disposeRetryProfile(profile);
       return dom;
     } catch (error) {
       if (attempt === 2 || !RETRYABLE_STARTUP.test(String(error?.message || ''))) throw error;
       primary = error;
       console.log(`Chromium attempt ${attempt + 1} failed (${error.message}); retrying with a fresh profile`);
-      fs.rmSync(profile, { recursive: true, force: true });
+      disposeRetryProfile(profile);
       await delay(500);
     }
   }

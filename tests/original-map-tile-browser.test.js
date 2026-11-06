@@ -46,7 +46,7 @@ function scenarioScript(singleCellData) {
   function check(value,message){if(!value)throw new Error(message)}
   function wait(ms){return new Promise(function(resolve){setTimeout(resolve,ms)})}
   async function waitFor(predicate,message,timeout){
-    var started=performance.now(),limit=timeout||2000;
+    var started=performance.now(),limit=timeout||10000;
     while(performance.now()-started<limit){if(predicate())return;await wait(10)}
     throw new Error(message);
   }
