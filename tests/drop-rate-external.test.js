@@ -74,7 +74,7 @@ try {
   const condition = analyze(call('条件.txt'));
   assert.deepEqual(condition.rows.map(row => row.baselineFraction), ['1/2', '1/2']);
   assert.ok(condition.rows[0].runtimeReasons.some(reason => reason.includes('N20>100')));
-  assert.equal(condition.groups[0].source.filePath, path.join(diary, '条件.txt'));
+  assert.equal(condition.groups[0].source.filePath, fs.realpathSync(path.join(diary, '条件.txt')));
   assert.equal(condition.groups[0].line, 3);
   write('CASE.txt', body('#CASE N10\n100\n(\n1/1 分支一\n)\n101\n(\n1/1 分支二\n)'));
   const cases = analyze(call('CASE.txt'));

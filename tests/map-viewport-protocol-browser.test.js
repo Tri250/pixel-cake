@@ -454,17 +454,24 @@ function main() {
     let selected;
     const diagnostics = [];
     for (let index = 0; index < candidates.length; index++) {
-      const result = spawnSync(candidates[index], [
-        '--headless=new', '--disable-gpu', '--disable-extensions',
-        '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--no-first-run',
-        '--allow-file-access-from-files', '--force-device-scale-factor=1',
-        `--user-data-dir=${path.join(temporary, `profile-${index}`)}`,
-        `--window-size=${windowWidth},${windowHeight}`, '--virtual-time-budget=2500', '--dump-dom', pathToFileURL(harness).href,
-      ], { encoding: 'utf8', timeout: 20000, maxBuffer: 8 * 1024 * 1024 });
-      diagnostics.push(`${candidates[index]}: status=${result.status}, error=${result.error?.message || '<none>'}`);
-      if (!result.error && result.status === 0 && /data-viewport-protocol-test=/i.test(result.stdout || '')) {
-        selected = { candidate: candidates[index], result };break;
+      // CI 冷启动或杀毒扫描可能拖慢首次浏览器拉起：对 spawn 层错误（超时/无法启动）
+      // 重试一次；页面真实失败（status != 0 或缺少结果标记）不重试。
+      for (let attempt = 1; attempt <= 2; attempt++) {
+        const result = spawnSync(candidates[index], [
+          '--headless=new', '--disable-gpu', '--disable-extensions',
+          '--disable-background-timer-throttling', '--disable-renderer-backgrounding', '--no-first-run',
+          '--allow-file-access-from-files', '--force-device-scale-factor=1',
+          `--user-data-dir=${path.join(temporary, `profile-${index}`)}`,
+          `--window-size=${windowWidth},${windowHeight}`, '--virtual-time-budget=2500', '--dump-dom', pathToFileURL(harness).href,
+        ], { encoding: 'utf8', timeout: 45000, maxBuffer: 8 * 1024 * 1024 });
+        diagnostics.push(`${candidates[index]}: attempt=${attempt} status=${result.status}, error=${result.error?.message || '<none>'}`);
+        if (!result.error && result.status === 0 && /data-viewport-protocol-test=/i.test(result.stdout || '')) {
+          selected = { candidate: candidates[index], result };
+          break;
+        }
+        if (!result.error) break;
       }
+      if (selected) break;
     }
     assert.ok(selected, `no browser completed the viewport scenario:\n${diagnostics.join('\n')}`);
     const encoded = /data-viewport-protocol-results="([^"]*)"/.exec(selected.result.stdout)?.[1] || '[]';
