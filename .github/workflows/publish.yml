@@ -219,12 +219,25 @@ jobs:
           "@
 
           Set-Content -LiteralPath $sedPath -Value $sed -Encoding ascii
-          & iexpress.exe /N /Q $sedPath
-          if ($LASTEXITCODE -ne 0) {
-            throw "IExpress packaging failed with exit code $LASTEXITCODE."
+
+          # iexpress.exe 会异步派生子进程完成打包后立即返回（$LASTEXITCODE 不可靠），
+          # 因此不依赖其退出码，改为轮询等待产物 EXE 生成。
+          Start-Process -FilePath 'iexpress.exe' -ArgumentList "/N /Q `"$sedPath`"" -WindowStyle Hidden | Out-Null
+
+          $deadline = (Get-Date).AddSeconds(180)
+          while (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
+            if ((Get-Date) -gt $deadline) {
+              throw "Windows EXE installer was not created within 180s: $exePath"
+            }
+            Start-Sleep -Seconds 2
           }
-          if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
-            throw "Windows EXE installer was not created: $exePath"
+          # 等待文件写入完成（大小稳定）
+          $lastSize = -1
+          for ($i = 0; $i -lt 30; $i++) {
+            $size = (Get-Item -LiteralPath $exePath).Length
+            if ($size -eq $lastSize -and $size -gt 0) { break }
+            $lastSize = $size
+            Start-Sleep -Seconds 2
           }
 
           Add-Content -LiteralPath $env:GITHUB_OUTPUT -Value "exe_path=$exePath" -Encoding utf8
