@@ -87,10 +87,16 @@ try {
   ) -join "`r`n"
   Set-Content -LiteralPath (Join-Path $srcDir 'install-boo.cmd') -Value $bootstrap -Encoding ascii
 
-  # ---- 2. 生成 IExpress SED（向导风格分节；全部 ASCII）----
-  # 路径加引号：检出目录或临时目录含空格时 iexpress 仍能正确解析。
-  # 注意：IExpress 的 SED 解析器要求 CRLF 行尾；源码以 LF 检出时 here-string
-  # 直接写出会生成 LF-only 的 SED，iexpress 静默失败（退出码 1，无任何输出）。
+  # ---- 2. 生成 IExpress SED（对齐 iexpress 向导生成的公开 SED 格式）----
+  # 格式依据（已验证的公开样例）：SourceFiles0 必须是普通「目录路径 + 尾反斜杠」，
+  # 不能带尾部 %，也不能加引号（引号包裹的路径在尾反斜杠处存在 " 转义歧义）。
+  # 含空格的路径统一转 8.3 短路径，保证 SED 全文无空格。注意：IExpress 的 SED
+  # 解析器要求 CRLF 行尾；源码以 LF 检出时 here-string 直接写出会生成 LF-only
+  # 的 SED，iexpress 静默失败（退出码 1，无任何输出）。
+  $fso = New-Object -ComObject Scripting.FileSystemObject
+  $shortSrcDir = $fso.GetFolder($srcDir).ShortPath
+  $shortTargetDir = $fso.GetFolder($outDirectory).ShortPath
+  $targetNamePath = Join-Path $shortTargetDir $installerName
   $sedPath = Join-Path $stageRoot 'boo-setup.sed'
   $sedLines = @(
     '[Version]',
@@ -105,12 +111,12 @@ try {
     'PostInstallCmd=<None>',
     'AdminQuietInstCmd=<None>',
     'UserQuietInstCmd=<None>',
-    "TargetName=`"$OutPath`"",
+    "TargetName=$targetNamePath",
     'FriendlyName=BOO Visual Editor Setup',
-    "SourceFiles0=`"$srcDir\`"",
+    "SourceFiles0=$shortSrcDir\",
     '',
     '[SourceFiles]',
-    "SourceFiles0=`"$srcDir\%`"",
+    "SourceFiles0=$shortSrcDir\",
     '',
     '[SourceFiles0]',
     "%FILE0%=$vsixName",

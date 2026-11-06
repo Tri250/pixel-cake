@@ -863,12 +863,14 @@ function insidePreviewRoot(root: string, target: string): boolean {
   return relative !== '' && !path.isAbsolute(relative) && relative !== '..' && !relative.startsWith(`..${path.sep}`);
 }
 
-/** Reject links at every level, including an in-root junction to another in-root folder. */
+/** Reject links at every level below the trusted root, including an in-root junction to another in-root folder. */
 function hasOnlyRealPreviewComponents(root: string, target: string, directoryTarget = false): boolean {
   if (target !== root && !insidePreviewRoot(root, target)) return false;
   try {
     const rootStat = fs.lstatSync(root);
-    if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || pathKey(fs.realpathSync(root)) !== pathKey(root)) return false;
+    // 信任锚是所选根目录本身；根位于符号链接祖先之下（macOS 临时目录
+    // /var → /private/var）不代表不可信，最终用规范化路径做一致比较。
+    if (!rootStat.isDirectory() || rootStat.isSymbolicLink()) return false;
     const segments = path.relative(root, target).split(path.sep).filter(Boolean);
     let current = root;
     for (let index = 0; index < segments.length; index++) {
@@ -878,7 +880,10 @@ function hasOnlyRealPreviewComponents(root: string, target: string, directoryTar
       const directory = index < segments.length - 1 || directoryTarget;
       if (directory ? !stat.isDirectory() : !stat.isFile()) return false;
     }
-    return pathKey(fs.realpathSync(target)) === pathKey(target);
+    // 目标经 realpath 解析后必须仍在根的真实路径之下：词法相同但根的
+    // 祖先含符号链接时（macOS /var），两侧都先规范化再比较。
+    const canonicalRoot = fs.realpathSync(root);
+    return pathKey(fs.realpathSync(target)) === pathKey(path.join(canonicalRoot, path.relative(root, target)));
   } catch { return false; }
 }
 
