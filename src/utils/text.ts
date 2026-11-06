@@ -2,12 +2,23 @@
  * 文本编码工具 — GBK/UTF-8 解码
  */
 import { Buffer } from 'buffer';
+import * as crypto from 'crypto';
 
 export type PreservedTextEncoding = 'utf8' | 'utf8-bom' | 'gbk';
 
 export interface DecodedTextFile {
   text: string;
   encoding: PreservedTextEncoding;
+}
+
+/**
+ * 实体行内容指纹：对原始行文本取短哈希。地图预览把解析出的 NPC/刷怪/标识
+ * 连同指纹一起发给前端，落盘前用当前文件里的同一行重新计算比对；不一致说明
+ * 行内容在预览加载后被外部程序或未保存草稿改动，按行号写入会改错记录，
+ * 必须拒绝并提示刷新。
+ */
+export function entityLineFingerprint(rawLine: string): string {
+  return crypto.createHash('sha256').update(rawLine, 'utf8').digest('hex').slice(0, 16);
 }
 
 /** GBK编码读取文件内容 (传奇脚本默认GBK) */

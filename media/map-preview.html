@@ -1569,11 +1569,11 @@ function postEntitySave(type,entity){
   if(!entity)return;
   const requestId=++state.entityRequest;state.entityPendingRequest=requestId;setSaveState('保存中','saving');
   if(type==='npc'){
-    const npc={lineNumber:entity.lineNumber,x:entity.x,y:entity.y,appearance:entity.appearance};
+    const npc={lineNumber:entity.lineNumber,x:entity.x,y:entity.y,appearance:entity.appearance,lineFingerprint:entity.lineFingerprint};
     if(entity.iconDirty===true)npc.iconText=entity.iconText||'';
     vscode.postMessage({type:'updateNpc',requestId,npc});
   }
-  else vscode.postMessage({type:'updateSpawn',requestId,spawn:{lineNumber:entity.lineNumber,fields:entity.fields}});
+  else vscode.postMessage({type:'updateSpawn',requestId,spawn:{lineNumber:entity.lineNumber,fields:entity.fields,lineFingerprint:entity.lineFingerprint}});
 }
 function beginEntityDrag(event,type,entity){
   if(event.button!==0||!state.original.active)return;
@@ -1699,7 +1699,8 @@ function scheduleSave(marker,version){
       y:marker.y,
       text:marker.text,
       colorSource:marker.colorSource,
-      mode:marker.mode
+      mode:marker.mode,
+      lineFingerprint:marker.lineFingerprint
     }
   };
   setSaveState('待保存','saving');
@@ -1945,7 +1946,7 @@ npcEditor.moveButton.addEventListener('click',()=>{
   clearTimeout(state.entitySaveTimer);state.entitySaveTimer=0;
   const requestId=++state.npcMoveRequest;state.pendingNpcMoveRequest=requestId;updateNpcMoveButton();setSaveState('正在切换地图','saving');
   vscode.postMessage({type:'moveNpcToMap',requestId,npc:{
-    lineNumber:npc.lineNumber,x:npc.x,y:npc.y,appearance:npc.appearance,iconText:npc.iconText||'',targetMapKey:target.key
+    lineNumber:npc.lineNumber,x:npc.x,y:npc.y,appearance:npc.appearance,iconText:npc.iconText||'',targetMapKey:target.key,lineFingerprint:npc.lineFingerprint
   }});
 });
 document.getElementById('showSpawnRange').addEventListener('change',event=>{
@@ -1971,7 +1972,7 @@ deleteMarker.addEventListener('click',()=>{
   vscode.postMessage({
     type:'deleteMarker',
     requestId,
-    marker:{lineNumber:marker.lineNumber}
+    marker:{lineNumber:marker.lineNumber,lineFingerprint:marker.lineFingerprint}
   });
 });
 document.getElementById('toggleAddMarker').addEventListener('click',()=>{

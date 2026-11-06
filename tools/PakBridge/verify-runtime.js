@@ -30,9 +30,20 @@ for (const relativePath of ['boo-pak-bridge.exe', 'python312.dll', 'vcruntime140
   assert.strictEqual(buffer.readUInt16LE(peOffset + 4), 0x8664, `${relativePath} is not an x64 binary`);
 }
 
+// 冻结运行时是 Windows x64 PE 文件：文件存在性与 PE 头在任何平台都校验，
+// 但实际执行（--help / serve 健康检查）只能在 Windows 上进行，
+// Linux/macOS 打包机跳过执行步骤，由 Windows CI/发布机完成完整验证。
+const isWindows = process.platform === 'win32';
+
 const pathKey = Object.keys(process.env).find(key => key.toLowerCase() === 'path') || 'Path';
 const env = { ...process.env };
 env[pathKey] = [binDir, path.join(binDir, 'lib'), env[pathKey]].filter(Boolean).join(path.delimiter);
+
+if (!isWindows) {
+  console.log('PAK runtime files and PE headers verified; execution checks skipped on non-Windows platform.');
+  process.exit(0);
+}
+
 const result = spawnSync(path.join(binDir, 'boo-pak-bridge.exe'), ['--help'], {
   cwd: binDir,
   env,

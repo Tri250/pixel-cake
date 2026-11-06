@@ -45,9 +45,26 @@ const REQUIRED_NPC_DIALOG_DYNAMIC_ENTRY_FILES = Object.freeze([
   'out/utils/archive-image-worker.js',
 ]);
 
+/** 打包后文件存在性检查。vsce 会规范化根级文件名（README.md → readme.md、LICENSE → LICENSE.txt），
+ *  且不同版本行为可能变化，因此按大小写不敏感匹配，避免对 vsce 实现细节的误报。 */
+function packagedFileExists(root, relative) {
+  const direct = path.join(root, relative);
+  if (fs.existsSync(direct)) return true;
+  const base = path.basename(relative).toLowerCase();
+  try {
+    return fs.readdirSync(path.dirname(direct)).some(entry => entry.toLowerCase() === base);
+  } catch {
+    return false;
+  }
+}
+
 function verifyRequiredPackagedFiles(root, relativePaths, label) {
-  const missing = relativePaths.filter(relative => !fs.existsSync(path.join(root, relative)));
-  assert.deepEqual(missing, [], `${label} packaged runtime files are missing:\n${missing.join('\n')}`);
+  // 每一项可以给出多个可接受的文件名（vsce 会把 LICENSE 规范化为 LICENSE.txt 等）。
+  const missing = relativePaths.filter(relative => {
+    const accepted = Array.isArray(relative) ? relative : [relative];
+    return !accepted.some(name => packagedFileExists(root, name));
+  });
+  assert.deepEqual(missing, [], `${label} packaged runtime files are missing:\n${missing.map(item => Array.isArray(item) ? item.join(' | ') : item).join('\n')}`);
 }
 
 function isPathInside(root, candidate) {
@@ -244,7 +261,7 @@ async function main() {
   const marketplaceIcon = verifyMarketplaceIcon(packagedRoot, packagedPackage);
   verifyRequiredPackagedFiles(
     packagedRoot,
-    ['README.md', 'LICENSE', 'THIRD_PARTY_NOTICES.md'],
+    [['README.md', 'readme.md'], ['LICENSE', 'LICENSE.txt', 'LICENSE.md'], ['CHANGELOG.md', 'changelog.md'], 'THIRD_PARTY_NOTICES.md'],
     'Project notice'
   );
   verifyRequiredPackagedFiles(packagedRoot, REQUIRED_NPC_DIALOG_RUNTIME_FILES, 'Ctrl+F12');

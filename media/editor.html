@@ -1839,7 +1839,7 @@
             if (prop === 'seconds') {
                 el.countdownSeconds = parseInt(val) || 59;
             } else if (prop === 'color') {
-                el.countdownColor = parseInt(val) || 255;
+                el.countdownColor = intOr(val, 255);
             }
             updatePropsPanel();
             redraw();
@@ -1880,13 +1880,13 @@
                 case 'width': el.inputWidth = parseInt(val) || 120; break;
                 case 'height': el.inputHeight = parseInt(val) || 30; break;
                 case 'bgColor': el.inputBgColor = parseInt(val) || 0; break;
-                case 'borderColor': el.inputBorderColor = parseInt(val) || 255; break;
-                case 'textColor': el.inputTextColor = parseInt(val) || 255; break;
+                case 'borderColor': el.inputBorderColor = intOr(val, 255); break;
+                case 'textColor': el.inputTextColor = intOr(val, 255); break;
                 case 'minLen': el.inputMinLen = parseInt(val) || 0; break;
                 case 'maxLen': el.inputMaxLen = parseInt(val) || 20; break;
                 case 'errorMsg': el.inputErrorMsg = val || '输入无效'; break;
                 case 'placeholder': el.inputPlaceholder = val || '请输入'; break;
-                case 'placeholderColor': el.inputPlaceholderColor = parseInt(val) || 128; break;
+                case 'placeholderColor': el.inputPlaceholderColor = intOr(val, 128); break;
             }
 
             // 重新生成图片
@@ -1919,13 +1919,13 @@
                 case 'width': el.inputWidth = parseInt(val) || 100; break;
                 case 'height': el.inputHeight = parseInt(val) || 30; break;
                 case 'bgColor': el.inputBgColor = parseInt(val) || 0; break;
-                case 'borderColor': el.inputBorderColor = parseInt(val) || 255; break;
-                case 'textColor': el.inputTextColor = parseInt(val) || 255; break;
+                case 'borderColor': el.inputBorderColor = intOr(val, 255); break;
+                case 'textColor': el.inputTextColor = intOr(val, 255); break;
                 case 'minVal': el.inputMinVal = parseInt(val) || 0; break;
                 case 'maxVal': el.inputMaxVal = parseInt(val) || 999999; break;
                 case 'errorMsg': el.inputErrorMsg = val || '数字无效'; break;
                 case 'placeholder': el.inputPlaceholder = val || '请输入数字'; break;
-                case 'placeholderColor': el.inputPlaceholderColor = parseInt(val) || 128; break;
+                case 'placeholderColor': el.inputPlaceholderColor = intOr(val, 128); break;
             }
 
             // 重新生成图片
@@ -2039,7 +2039,7 @@ function getColorCss(colorCode) {
 
             var el = elements[elementIdx];
             if (!el) return;
-            var currentColor = el.textColor || 255;
+            var currentColor = intOr(el.textColor, 255);
 
             var panel = document.createElement('div');
             panel.id = 'colorPickerPanel';
@@ -2177,10 +2177,10 @@ function getColorCss(colorCode) {
             var boldCheck = document.getElementById('propBold');
 
             el.textContent = newText;
-            el.textColor = parseInt(newColor) || 255;
+            el.textColor = intOr(newColor, 255);
             el.textScript = newScript || '';
             el.textFont = fontSelect ? fontSelect.value : '宋体';
-            el.textSize = sizeInput ? (parseInt(sizeInput.value) || 12) : 12;
+            el.textSize = sizeInput ? intOr(sizeInput.value, 12) : 12;
             el.textBold = boldCheck ? boldCheck.checked : false;
             el.name = '文字: ' + newText;
 
@@ -2740,7 +2740,7 @@ function getColorCss(colorCode) {
         // 确认添加倒计时
         window.confirmAddCountdown = function() {
             var seconds = parseInt(document.getElementById('countdownSeconds').value) || 59;
-            var color = parseInt(document.getElementById('countdownColor').value) || 255;
+            var color = intOr(document.getElementById('countdownColor').value, 255);
             var x = parseInt(document.getElementById('countdownX').value) || 0;
             var y = parseInt(document.getElementById('countdownY').value) || 0;
 
@@ -5060,10 +5060,10 @@ function getColorCss(colorCode) {
                 var y = Math.round(el.y);
                 if (el.isText) {
                     // 文字格式: <&text:文字内容:x:y{fcolor=颜色代码;fbold=1;fsize=大小;fname=字体}/@触发脚本>
-                    var color = el.textColor || 255;
+                    var color = intOr(el.textColor, 255);
                     var script = el.textScript || '';
                     var font = el.textFont || '宋体';
-                    var size = el.textSize || 12;
+                    var size = intOr(el.textSize, 12);
                     var bold = el.textBold || false;
 
                     // 构建属性字符串
@@ -5114,7 +5114,7 @@ function getColorCss(colorCode) {
                 } else if (el.isCountdown) {
                     // 倒计时格式: <&COUNTDOWN:倒计时秒数:1:文字颜色(0-255):X:Y> (坐标+4偏移，与文字一致)
                     var seconds = el.countdownSeconds || 59;
-                    var color = el.countdownColor || 255;
+                    var color = intOr(el.countdownColor, 255);
                     codes.push('<&COUNTDOWN:' + seconds + ':1:' + color + ':' + pad3(x + 4) + ':' + pad3(y + 4) + '>');
                 } else if (el.isInputText) {
                     // 文本框格式: <&INPUTTEXT:输入框ID:X:Y:宽度:高度:背景色:边框色:文字颜色:最小长度:最大长度:数据无效时提示对话框内容:提示文字:提示文字颜色>
@@ -5123,13 +5123,13 @@ function getColorCss(colorCode) {
                     var w = el.inputWidth || 120;
                     var h = el.inputHeight || 30;
                     var bg = el.inputBgColor || 0;
-                    var border = el.inputBorderColor || 255;
-                    var textColor = el.inputTextColor || 255;
+                    var border = intOr(el.inputBorderColor, 255);
+                    var textColor = intOr(el.inputTextColor, 255);
                     var minLen = el.inputMinLen || 0;
-                    var maxLen = el.inputMaxLen || 20;
+                    var maxLen = intOr(el.inputMaxLen, 20);
                     var errMsg = el.inputErrorMsg || '输入无效';
                     var placeholder = el.inputPlaceholder || '请输入';
-                    var phColor = el.inputPlaceholderColor || 128;
+                    var phColor = intOr(el.inputPlaceholderColor, 128);
                     codes.push('<&INPUTTEXT:' + id + ':' + pad3(x + 4) + ':' + pad3(y + 4) + ':' + w + ':' + h + ':' + bg + ':' + border + ':' + textColor + ':' + minLen + ':' + maxLen + ':' + errMsg + ':' + placeholder + ':' + phColor + '>');
                 } else if (el.isInputNum) {
                     // 数字框格式: <&INPUTNUM:输入框ID:X:Y:宽度:高度:背景色:边框色:文字颜色:最小值:最大值:数据无效时提示对话框内容:提示文字:提示文字颜色>
@@ -5138,13 +5138,13 @@ function getColorCss(colorCode) {
                     var w = el.inputWidth || 100;
                     var h = el.inputHeight || 30;
                     var bg = el.inputBgColor || 0;
-                    var border = el.inputBorderColor || 255;
-                    var textColor = el.inputTextColor || 255;
+                    var border = intOr(el.inputBorderColor, 255);
+                    var textColor = intOr(el.inputTextColor, 255);
                     var minVal = el.inputMinVal || 0;
-                    var maxVal = el.inputMaxVal || 999999;
+                    var maxVal = intOr(el.inputMaxVal, 999999);
                     var errMsg = el.inputErrorMsg || '数字无效';
                     var placeholder = el.inputPlaceholder || '请输入数字';
-                    var phColor = el.inputPlaceholderColor || 128;
+                    var phColor = intOr(el.inputPlaceholderColor, 128);
                     codes.push('<&INPUTNUM:' + id + ':' + pad3(x + 4) + ':' + pad3(y + 4) + ':' + w + ':' + h + ':' + bg + ':' + border + ':' + textColor + ':' + minVal + ':' + maxVal + ':' + errMsg + ':' + placeholder + ':' + phColor + '>');
                 } else if (el.isEffect) {
                     // 特效格式: <&PlayImg:will序号:特效开始图片序号:播放张数:播放速度:X:Y>
@@ -5459,7 +5459,7 @@ function getColorCss(colorCode) {
                     var itMaxLen = parseInt(inputTextMatch[10]);
                     var itErrMsg = inputTextMatch[11] || '输入无效';
                     var itPlaceholder = inputTextMatch[12] || '请输入';
-                    var itPhColor = parseInt(inputTextMatch[13]) || 128;
+                    var itPhColor = intOr(inputTextMatch[13], 128);
 
                     var result = renderInputToCanvas(itW, itH, itBg, itBorder, itTextColor, itPlaceholder, itPhColor);
                     pendingElements.push({
@@ -5495,7 +5495,7 @@ function getColorCss(colorCode) {
                     var inMaxVal = parseInt(inputNumMatch[10]);
                     var inErrMsg = inputNumMatch[11] || '数字无效';
                     var inPlaceholder = inputNumMatch[12] || '请输入数字';
-                    var inPhColor = parseInt(inputNumMatch[13]) || 128;
+                    var inPhColor = intOr(inputNumMatch[13], 128);
 
                     var result = renderInputToCanvas(inW, inH, inBg, inBorder, inTextColor, inPlaceholder, inPhColor);
                     pendingElements.push({
@@ -6295,6 +6295,8 @@ function getColorCss(colorCode) {
             });
             return props;
         }
+        // 整数取值：仅 undefined/NaN 回退默认值，0 等合法值原样保留（VISUAL-02）。
+        function intOr(value, fallback){ var n = parseInt(value, 10); return isNaN(n) ? fallback : n; }
         // 文字标签正则：内容允许冒号与数字（非贪婪取最后一组合法坐标）、坐标允许负号（VISUAL-04）。
         var TEXT_TAG_RE=/<&text:([\s\S]*?):(-?\d+):(-?\d+)\{([^}]*)\}(?:\/[@#]([^>]*))?>/gi;
 function generateCodeSilent(willIndex) {
@@ -6332,10 +6334,10 @@ function generateCodeSilent(willIndex) {
                 var x = Math.round(el.x);
                 var y = Math.round(el.y);
                 if (el.isText) {
-                    var color = el.textColor || 255;
+                    var color = intOr(el.textColor, 255);
                     var script = el.textScript || '';
                     var font = el.textFont || '宋体';
-                    var size = el.textSize || 12;
+                    var size = intOr(el.textSize, 12);
                     var bold = el.textBold || false;
                     var props = [];
                     props.push('fcolor=' + color);
@@ -6566,8 +6568,8 @@ function generateCodeSilent(willIndex) {
                     continue;
                 }
 
-                // 简单imgex图片
-                var imgexSimple = line.match(/<&imgex:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 简单imgex图片（x/y 可为负，VISUAL-04）
+                var imgexSimple = line.match(/<&imgex:(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (imgexSimple && folderAssets.length > 0) {
                     var sIdx = parseInt(imgexSimple[2]);
                     var simpleWill2 = parseInt(imgexSimple[1]);
@@ -6578,37 +6580,37 @@ function generateCodeSilent(willIndex) {
                     continue;
                 }
 
-                // 倒计时
-                var cdMatch = line.match(/<&COUNTDOWN:(\d+):(\d+):(\d+):(\d+):(\d+)>/i);
+                // 倒计时（坐标可为负；写侧 +4 补偿，读侧对称减 4，VISUAL-03/VISUAL-04）
+                var cdMatch = line.match(/<&COUNTDOWN:(\d+):(\d+):(\d+):(-?\d+):(-?\d+)>/i);
                 if (cdMatch) {
                     var secs = parseInt(cdMatch[1]), cdColor = parseInt(cdMatch[3]);
                     var h = Math.floor(secs/3600), m = Math.floor((secs%3600)/60), s = secs%60;
                     var ts = String(h).padStart(2,'0')+':'+String(m).padStart(2,'0')+':'+String(s).padStart(2,'0');
                     var r = renderTextToCanvas(ts, cdColor);
-                    pendingElements.push({ type:'countdown', src:r.canvas.toDataURL(), data:{ x:parseInt(cdMatch[4]), y:parseInt(cdMatch[5]), w:r.width, h:r.height, name:'倒计时: '+ts, isCountdown:true, countdownSeconds:secs, countdownColor:cdColor } });
+                    pendingElements.push({ type:'countdown', src:r.canvas.toDataURL(), data:{ x:parseInt(cdMatch[4]) - 4, y:parseInt(cdMatch[5]) - 4, w:r.width, h:r.height, name:'倒计时: '+ts, isCountdown:true, countdownSeconds:secs, countdownColor:cdColor } });
                     continue;
                 }
 
-                // 文本框
-                var itMatch = line.match(/<&INPUTTEXT:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
+                // 文本框（X/Y 可为负，VISUAL-04）
+                var itMatch = line.match(/<&INPUTTEXT:(\d+):(-?\d+):(-?\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
                 if (itMatch) {
                     var itW=parseInt(itMatch[4]),itH=parseInt(itMatch[5]);
-                    var r = renderInputToCanvas(itW,itH,parseInt(itMatch[6]),parseInt(itMatch[7]),parseInt(itMatch[8]),itMatch[12]||'请输入',parseInt(itMatch[13])||128);
-                    pendingElements.push({ type:'inputText', src:r.canvas.toDataURL(), data:{ x:parseInt(itMatch[2]) - 4, y:parseInt(itMatch[3]) - 4, w:itW, h:itH, name:'文本框', isInputText:true, inputId:parseInt(itMatch[1]), inputWidth:itW, inputHeight:itH, inputBgColor:parseInt(itMatch[6]), inputBorderColor:parseInt(itMatch[7]), inputTextColor:parseInt(itMatch[8]), inputMinLen:parseInt(itMatch[9]), inputMaxLen:parseInt(itMatch[10]), inputErrorMsg:itMatch[11]||'输入无效', inputPlaceholder:itMatch[12]||'请输入', inputPlaceholderColor:parseInt(itMatch[13])||128 } });
+                    var r = renderInputToCanvas(itW,itH,parseInt(itMatch[6]),parseInt(itMatch[7]),parseInt(itMatch[8]),itMatch[12]||'请输入',intOr(itMatch[13],128));
+                    pendingElements.push({ type:'inputText', src:r.canvas.toDataURL(), data:{ x:parseInt(itMatch[2]) - 4, y:parseInt(itMatch[3]) - 4, w:itW, h:itH, name:'文本框', isInputText:true, inputId:parseInt(itMatch[1]), inputWidth:itW, inputHeight:itH, inputBgColor:parseInt(itMatch[6]), inputBorderColor:parseInt(itMatch[7]), inputTextColor:parseInt(itMatch[8]), inputMinLen:parseInt(itMatch[9]), inputMaxLen:parseInt(itMatch[10]), inputErrorMsg:itMatch[11]||'输入无效', inputPlaceholder:itMatch[12]||'请输入', inputPlaceholderColor:intOr(itMatch[13],128) } });
                     continue;
                 }
 
-                // 数字框
-                var inMatch = line.match(/<&INPUTNUM:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
+                // 数字框（X/Y 可为负，VISUAL-04）
+                var inMatch = line.match(/<&INPUTNUM:(\d+):(-?\d+):(-?\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):(\d+):([^:]*):([^:]*):([^>]*)>/i);
                 if (inMatch) {
                     var inW=parseInt(inMatch[4]),inH=parseInt(inMatch[5]);
-                    var r = renderInputToCanvas(inW,inH,parseInt(inMatch[6]),parseInt(inMatch[7]),parseInt(inMatch[8]),inMatch[12]||'请输入数字',parseInt(inMatch[13])||128);
-                    pendingElements.push({ type:'inputNum', src:r.canvas.toDataURL(), data:{ x:parseInt(inMatch[2]) - 4, y:parseInt(inMatch[3]) - 4, w:inW, h:inH, name:'数字框', isInputNum:true, inputId:parseInt(inMatch[1]), inputWidth:inW, inputHeight:inH, inputBgColor:parseInt(inMatch[6]), inputBorderColor:parseInt(inMatch[7]), inputTextColor:parseInt(inMatch[8]), inputMinVal:parseInt(inMatch[9]), inputMaxVal:parseInt(inMatch[10]), inputErrorMsg:inMatch[11]||'数字无效', inputPlaceholder:inMatch[12]||'请输入数字', inputPlaceholderColor:parseInt(inMatch[13])||128 } });
+                    var r = renderInputToCanvas(inW,inH,parseInt(inMatch[6]),parseInt(inMatch[7]),parseInt(inMatch[8]),inMatch[12]||'请输入数字',intOr(inMatch[13],128));
+                    pendingElements.push({ type:'inputNum', src:r.canvas.toDataURL(), data:{ x:parseInt(inMatch[2]) - 4, y:parseInt(inMatch[3]) - 4, w:inW, h:inH, name:'数字框', isInputNum:true, inputId:parseInt(inMatch[1]), inputWidth:inW, inputHeight:inH, inputBgColor:parseInt(inMatch[6]), inputBorderColor:parseInt(inMatch[7]), inputTextColor:parseInt(inMatch[8]), inputMinVal:parseInt(inMatch[9]), inputMaxVal:parseInt(inMatch[10]), inputErrorMsg:inMatch[11]||'数字无效', inputPlaceholder:inMatch[12]||'请输入数字', inputPlaceholderColor:intOr(inMatch[13],128) } });
                     continue;
                 }
 
-                // 特效
-                var efMatch = line.match(/<&PlayImg:(\d+):(\d+):(\d+):(\d+):(\d+):(\d+)(?::(\d+))?>/i);
+                // 特效（X/Y 可为负，VISUAL-04）
+                var efMatch = line.match(/<&PlayImg:(\d+):(\d+):(\d+):(\d+):(-?\d+):(-?\d+)(?::(\d+))?>/i);
                 if (efMatch && folderAssets.length > 0) {
                     var efStart = parseInt(efMatch[2]);
                     var efWill2 = parseInt(efMatch[1]);
@@ -6620,8 +6622,8 @@ function generateCodeSilent(willIndex) {
                     continue;
                 }
 
-                // 进度条
-                var pbMatch = line.match(/<&ProgressBar:(\d+):(\d+)(?::(\d+):(\d+):(\d+):\d+:\d+:([\d-]+):([\d-]+):[^>]*)?>/i);
+                // 进度条（X/Y 可为负，VISUAL-04）
+                var pbMatch = line.match(/<&ProgressBar:(-?\d+):(-?\d+)(?::(\d+):(\d+):(\d+):\d+:\d+:([\d-]+):([\d-]+):[^>]*)?>/i);
                 if (pbMatch) {
                     var pbUrl2 = null, pbFillUrl2 = null, pbOffX2 = 0, pbOffY2 = 0;
                     var pbWill2 = pbMatch[3] !== undefined ? parseInt(pbMatch[3]) : undefined;
@@ -6650,8 +6652,8 @@ function generateCodeSilent(willIndex) {
                     continue;
                 }
 
-                // 装备框
-                var eqMatch = line.match(/<&itemshow:[^:]+:(\d+):(\d+):(\d+):(\d+)>/i);
+                // 装备框（x/y 可为负，VISUAL-04）
+                var eqMatch = line.match(/<&itemshow:[^:]+:(\d+):(-?\d+):(-?\d+):(\d+)>/i);
                 if (eqMatch) {
                     if (quickImports.equipFrame) {
                         pendingElements.push({ type:'equipFrame', src:quickImports.equipFrame.url, data:{ x:parseInt(eqMatch[2]), y:parseInt(eqMatch[3]), name:'装备框', isEquipFrame:true, equipItemName:'物品名字' } });

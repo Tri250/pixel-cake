@@ -183,6 +183,7 @@ interface MapPreviewMessage {
     colorSource?: string;
     mode?: number;
     modes?: number[];
+    lineFingerprint?: string;
   };
   npc?: {
     lineNumber?: number;
@@ -191,10 +192,12 @@ interface MapPreviewMessage {
     appearance?: number;
     iconText?: string;
     targetMapKey?: string;
+    lineFingerprint?: string;
   };
   spawn?: {
     lineNumber?: number;
     fields?: string[];
+    lineFingerprint?: string;
   };
 }
 
@@ -1401,12 +1404,12 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
 
   private enqueueMarkerUpdate(message: MapPreviewMessage): void {
     const sourceRoot = this.workspaceRoot(), markerFile = this.markerFile, mapKey = this.currentMap?.key;
-    this.markerSaveQueue = this.markerSaveQueue.then(() => {
+    this.markerSaveQueue = this.markerSaveQueue.then(async () => {
       try {
         if (this.workspaceRoot() !== sourceRoot || this.markerFile !== markerFile || this.currentMap?.key !== mapKey) {
           throw new Error('当前地图或地图标识文件已经切换');
         }
-        const marker = this.saveMarkerUpdate(message);
+        const marker = await this.saveMarkerUpdate(message);
         void this.panel?.webview.postMessage({
           type: 'markerSaved',
           requestId: message.requestId,
@@ -1422,23 +1425,55 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private saveMarkerUpdate(message: MapPreviewMessage): ReturnType<typeof parseMapMarkerText>[number] {
+  /**
+   * 目标文件若已在编辑器中打开，必须通过文档 API 应用修改而不是直接写盘：
+   * 直接写盘会让编辑器里的未保存草稿与磁盘脱节，用户保存时会覆盖预览的修改，
+   * 反之预览写盘也会静默丢弃草稿。行级指纹校验发生在写入目标文本上。
+   */
+  private findOpenTextDocument(filePath: string): vscode.TextDocument | undefined {
+    const normalize = (value: string) => (process.platform === 'win32' ? value.toLowerCase() : value);
+    const target = normalize(filePath);
+    return vscode.workspace.textDocuments.find(document => normalize(document.uri.fsPath) === target);
+  }
+
+  /** 通过已打开的文档应用全文替换；文档原本干净时自动保存，脏时保留草稿并提示手动保存。 */
+  private async writeThroughOpenDocument(document: vscode.TextDocument, updatedText: string, label: string): Promise<void> {
+    const wasDirty = document.isDirty;
+    const edit = new vscode.WorkspaceEdit();
+    const fullRange = new vscode.Range(document.positionAt(0), document.positionAt(document.getText().length));
+    edit.replace(document.uri, fullRange, updatedText);
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (!applied) throw new Error(`无法将修改写入已打开的 ${label}，请保存或关闭该文件后重试`);
+    if (!wasDirty) {
+      await document.save();
+    } else {
+      void vscode.window.showInformationMessage(`${label} 的地图预览修改已写入编辑器中的未保存内容，请手动保存文件`);
+    }
+  }
+
+  private async saveMarkerUpdate(message: MapPreviewMessage): Promise<ReturnType<typeof parseMapMarkerText>[number]> {
     if (!isFile(this.markerFile)) throw new Error('尚未导入小地图标识文件');
     const marker = parseMarkerUpdateMessage(message.marker);
+    const document = this.findOpenTextDocument(this.markerFile);
+    if (document) {
+      const updated = updateMapMarkerLine(document.getText(), marker.lineNumber, marker.update, message.marker?.lineFingerprint);
+      await this.writeThroughOpenDocument(document, updated.text, '地图标识文件');
+      return updated.marker;
+    }
     const decoded = decodeTextFile(fs.readFileSync(this.markerFile));
-    const updated = updateMapMarkerLine(decoded.text, marker.lineNumber, marker.update);
+    const updated = updateMapMarkerLine(decoded.text, marker.lineNumber, marker.update, message.marker?.lineFingerprint);
     fs.writeFileSync(this.markerFile, encodeTextFile(updated.text, decoded.encoding));
     return updated.marker;
   }
 
   private enqueueMarkerAddition(message: MapPreviewMessage): void {
     const sourceRoot = this.workspaceRoot(), markerFile = this.markerFile, mapKey = this.currentMap?.key;
-    this.markerSaveQueue = this.markerSaveQueue.then(() => {
+    this.markerSaveQueue = this.markerSaveQueue.then(async () => {
       try {
         if (this.workspaceRoot() !== sourceRoot || this.markerFile !== markerFile || this.currentMap?.key !== mapKey) {
           throw new Error('当前地图或地图标识文件已经切换');
         }
-        const markers = this.saveMarkerAdditions(message);
+        const markers = await this.saveMarkerAdditions(message);
         void this.panel?.webview.postMessage({
           type: 'markersAdded',
           requestId: message.requestId,
@@ -1454,10 +1489,16 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private saveMarkerAdditions(message: MapPreviewMessage): ReturnType<typeof parseMapMarkerText> {
+  private async saveMarkerAdditions(message: MapPreviewMessage): Promise<ReturnType<typeof parseMapMarkerText>> {
     if (!isFile(this.markerFile)) throw new Error('尚未导入小地图标识文件');
     if (!this.currentMap) throw new Error('尚未选择地图');
     const updates = parseMarkerAdditionMessage(message.marker, this.currentMap.name);
+    const document = this.findOpenTextDocument(this.markerFile);
+    if (document) {
+      const appended = appendMapMarkerLines(document.getText(), updates);
+      await this.writeThroughOpenDocument(document, appended.text, '地图标识文件');
+      return appended.markers;
+    }
     const decoded = decodeTextFile(fs.readFileSync(this.markerFile));
     const appended = appendMapMarkerLines(decoded.text, updates);
     fs.writeFileSync(this.markerFile, encodeTextFile(appended.text, decoded.encoding));
@@ -1503,12 +1544,12 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
       return;
     }
 
-    this.markerSaveQueue = this.markerSaveQueue.then(() => {
+    this.markerSaveQueue = this.markerSaveQueue.then(async () => {
       try {
         if (this.currentMap?.key !== currentMap.key || this.workspaceRoot() !== sourceRoot || this.markerFile !== markerFile) {
           throw new Error('当前地图或地图标识文件已经切换');
         }
-        const markers = this.saveMarkerDeletion(lineNumber, currentMap);
+        const markers = await this.saveMarkerDeletion(lineNumber, currentMap, message.marker?.lineFingerprint);
         void this.panel?.webview.postMessage({
           type: 'markerDeleted',
           requestId: message.requestId,
@@ -1525,13 +1566,22 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
     });
   }
 
-  private saveMarkerDeletion(
+  private async saveMarkerDeletion(
     lineNumber: number,
-    map: MapInfoEntry
-  ): ReturnType<typeof parseMapMarkerText> {
+    map: MapInfoEntry,
+    lineFingerprint?: string
+  ): Promise<ReturnType<typeof parseMapMarkerText>> {
     if (!isFile(this.markerFile)) throw new Error('尚未导入小地图标识文件');
+    const document = this.findOpenTextDocument(this.markerFile);
+    if (document) {
+      const deleted = deleteMapMarkerLine(document.getText(), lineNumber, lineFingerprint);
+      await this.writeThroughOpenDocument(document, deleted.text, '地图标识文件');
+      return parseMapMarkerText(deleted.text).filter(marker =>
+        markerMatchesMap(marker, map)
+      );
+    }
     const decoded = decodeTextFile(fs.readFileSync(this.markerFile));
-    const deleted = deleteMapMarkerLine(decoded.text, lineNumber);
+    const deleted = deleteMapMarkerLine(decoded.text, lineNumber, lineFingerprint);
     fs.writeFileSync(this.markerFile, encodeTextFile(deleted.text, decoded.encoding));
     return parseMapMarkerText(deleted.text).filter(marker =>
       markerMatchesMap(marker, map)
@@ -1541,7 +1591,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
   private enqueueNpcUpdate(message: MapPreviewMessage): void {
     const mapKey = this.currentMap?.key;
     const sourceRoot = this.workspaceRoot();
-    this.entitySaveQueue = this.entitySaveQueue.then(() => {
+    this.entitySaveQueue = this.entitySaveQueue.then(async () => {
       try {
         if (!mapKey || this.currentMap?.key !== mapKey || this.workspaceRoot() !== sourceRoot) throw new Error('当前地图已经切换');
         const workspaceRoot = this.workspaceRoot();
@@ -1560,10 +1610,18 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
         const engine = normalizeEngineId(
           vscode.workspace.getConfiguration('boo', this.sourceUri).get<string>('engine', 'GOM')
         );
-        const decoded = decodeTextFile(fs.readFileSync(merchantPath));
-        const updated = updateMerchantNpc(decoded.text, lineNumber, x, y, appearance);
         if (iconText !== undefined) validateNpcIconText(iconText, engine);
-        fs.writeFileSync(merchantPath, encodeTextFile(updated.text, decoded.encoding));
+        const document = this.findOpenTextDocument(merchantPath);
+        let updated: ReturnType<typeof updateMerchantNpc>;
+        if (document) {
+          // Merchant.txt 已打开：写入编辑器缓冲，避免覆盖未保存草稿。
+          updated = updateMerchantNpc(document.getText(), lineNumber, x, y, appearance, undefined, message.npc?.lineFingerprint);
+          await this.writeThroughOpenDocument(document, updated.text, 'Merchant.txt');
+        } else {
+          const decoded = decodeTextFile(fs.readFileSync(merchantPath));
+          updated = updateMerchantNpc(decoded.text, lineNumber, x, y, appearance, undefined, message.npc?.lineFingerprint);
+          fs.writeFileSync(merchantPath, encodeTextFile(updated.text, decoded.encoding));
+        }
         if (iconText !== undefined) {
           saveNpcIconText(envirDirectory, updated.npc, engine, iconText);
         }
@@ -1592,7 +1650,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
   private enqueueSpawnUpdate(message: MapPreviewMessage): void {
     const mapKey = this.currentMap?.key;
     const sourceRoot = this.workspaceRoot();
-    this.entitySaveQueue = this.entitySaveQueue.then(() => {
+    this.entitySaveQueue = this.entitySaveQueue.then(async () => {
       try {
         if (!mapKey || this.currentMap?.key !== mapKey || this.workspaceRoot() !== sourceRoot) throw new Error('当前地图已经切换');
         const workspaceRoot = this.workspaceRoot();
@@ -1603,9 +1661,17 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
         const fields = Array.isArray(message.spawn?.fields)
           ? message.spawn.fields.map(value => String(value ?? ''))
           : [];
-        const decoded = decodeTextFile(fs.readFileSync(monGenPath));
-        const updated = updateMonGenFields(decoded.text, lineNumber, fields);
-        fs.writeFileSync(monGenPath, encodeTextFile(updated.text, decoded.encoding));
+        const document = this.findOpenTextDocument(monGenPath);
+        let updated: ReturnType<typeof updateMonGenFields>;
+        if (document) {
+          // MonGen.txt 已打开：写入编辑器缓冲，避免覆盖未保存草稿。
+          updated = updateMonGenFields(document.getText(), lineNumber, fields, message.spawn?.lineFingerprint);
+          await this.writeThroughOpenDocument(document, updated.text, 'MonGen.txt');
+        } else {
+          const decoded = decodeTextFile(fs.readFileSync(monGenPath));
+          updated = updateMonGenFields(decoded.text, lineNumber, fields, message.spawn?.lineFingerprint);
+          fs.writeFileSync(monGenPath, encodeTextFile(updated.text, decoded.encoding));
+        }
         void this.panel?.webview.postMessage({
           type: 'spawnSaved',
           requestId: message.requestId,
@@ -1620,7 +1686,7 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
   private enqueueNpcMove(message: MapPreviewMessage): void {
     const sourceMapKey = this.currentMap?.key;
     const sourceRoot = this.workspaceRoot();
-    this.entitySaveQueue = this.entitySaveQueue.then(() => {
+    this.entitySaveQueue = this.entitySaveQueue.then(async () => {
       try {
         if (!sourceMapKey || this.currentMap?.key !== sourceMapKey || this.workspaceRoot() !== sourceRoot) throw new Error('当前地图已经切换');
         const targetMapKey = String(message.npc?.targetMapKey || '');
@@ -1650,20 +1716,37 @@ export class MapPreviewProvider implements vscode.WebviewViewProvider {
           x = Math.max(0, Math.min(dimensions.width - 1, Math.round(x)));
           y = Math.max(0, Math.min(dimensions.height - 1, Math.round(y)));
         }
-        const decoded = decodeTextFile(fs.readFileSync(merchantPath));
-        const updated = updateMerchantNpc(
-          decoded.text,
-          lineNumber,
-          x,
-          y,
-          appearance,
-          targetMap.mapId
-        );
         const iconText = typeof message.npc?.iconText === 'string'
           ? message.npc.iconText
           : undefined;
         if (iconText !== undefined) validateNpcIconText(iconText, engine);
-        fs.writeFileSync(merchantPath, encodeTextFile(updated.text, decoded.encoding));
+        const document = this.findOpenTextDocument(merchantPath);
+        let updated: ReturnType<typeof updateMerchantNpc>;
+        if (document) {
+          // Merchant.txt 已打开：写入编辑器缓冲，避免覆盖未保存草稿。
+          updated = updateMerchantNpc(
+            document.getText(),
+            lineNumber,
+            x,
+            y,
+            appearance,
+            targetMap.mapId,
+            message.npc?.lineFingerprint
+          );
+          await this.writeThroughOpenDocument(document, updated.text, 'Merchant.txt');
+        } else {
+          const decoded = decodeTextFile(fs.readFileSync(merchantPath));
+          updated = updateMerchantNpc(
+            decoded.text,
+            lineNumber,
+            x,
+            y,
+            appearance,
+            targetMap.mapId,
+            message.npc?.lineFingerprint
+          );
+          fs.writeFileSync(merchantPath, encodeTextFile(updated.text, decoded.encoding));
+        }
         if (iconText !== undefined) saveNpcIconText(envirDirectory, updated.npc, engine, iconText);
         this.pendingNpcReveal = {
           mapKey: targetMap.key,

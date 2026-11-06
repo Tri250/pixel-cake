@@ -1,4 +1,5 @@
 import * as fs from 'fs';
+import { entityLineFingerprint } from './text';
 
 export interface MapInfoEntry {
   key: string;
@@ -98,6 +99,8 @@ export interface MapMarker {
   color: string;
   mode: 0 | 1;
   lineNumber: number;
+  /** 原始行内容指纹：落盘前校验行未被外部改动。 */
+  lineFingerprint: string;
 }
 
 export interface MapMarkerUpdate {
@@ -161,21 +164,37 @@ export function parseMapMarkerText(text: string): MapMarker[] {
       color: normalizeMarkerColor(colorField),
       mode: modeNumber,
       lineNumber: index + 1,
+      lineFingerprint: entityLineFingerprint(rawLine),
     });
   }
 
   return result;
 }
 
+/** 标识行指纹校验：与 map-entities 的实体校验语义一致，指纹缺失时跳过。 */
+function assertMarkerLineFingerprint(text: string, lineNumber: number, lineFingerprint: string | undefined): void {
+  if (!lineFingerprint) return;
+  const range = findLineRange(text, lineNumber);
+  const current = range ? text.slice(range.start, range.end) : '';
+  if (entityLineFingerprint(current) !== lineFingerprint) {
+    throw new Error(
+      `标识文件第 ${lineNumber} 行内容已在地图预览加载后被外部修改（文件被其他程序改写或编辑器存在未保存草稿），` +
+      '为避免改错记录，本次修改已取消；请刷新地图预览后重试'
+    );
+  }
+}
+
 export function updateMapMarkerLine(
   text: string,
   lineNumber: number,
-  update: MapMarkerUpdate
+  update: MapMarkerUpdate,
+  lineFingerprint?: string
 ): { text: string; marker: MapMarker } {
   if (!Number.isInteger(lineNumber) || lineNumber < 1) {
     throw new Error('标识行号无效');
   }
   validateMarkerUpdate(update);
+  assertMarkerLineFingerprint(text, lineNumber, lineFingerprint);
 
   const range = findLineRange(text, lineNumber);
   if (!range) throw new Error(`标识第 ${lineNumber} 行不存在`);
@@ -196,11 +215,13 @@ export function updateMapMarkerLine(
 
 export function deleteMapMarkerLine(
   text: string,
-  lineNumber: number
+  lineNumber: number,
+  lineFingerprint?: string
 ): { text: string; marker: MapMarker } {
   if (!Number.isInteger(lineNumber) || lineNumber < 1) {
     throw new Error('标识行号无效');
   }
+  assertMarkerLineFingerprint(text, lineNumber, lineFingerprint);
   const range = findLineRange(text, lineNumber);
   if (!range) throw new Error(`标识第 ${lineNumber} 行不存在`);
   const currentLine = text.slice(range.start, range.end);

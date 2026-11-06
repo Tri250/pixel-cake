@@ -4,7 +4,7 @@
 
 ## V4.4.2 - 2026-11-06
 
-- 打包与安装链路修复：`.vscodeignore` 补齐冻结运行时与 VC++ Runtime 许可证白名单、README 与 CHANGELOG 锚定；打包后依赖校验脚本的许可证/README 文件名与真实产物对齐，`verify:packaged-dependencies` 通过。
+- 打包与安装链路修复：`.vscodeignore` 补齐冻结运行时与 VC++ Runtime 许可证白名单、README 与 CHANGELOG 锚定；打包后依赖校验脚本的许可证/README 文件名与真实产物对齐，`verify:packaged-dependencies` 通过；冻结 PAK 运行时校验在非 Windows 打包机上保留文件存在性与 PE 头检查、跳过仅 Windows 可执行的运行测试（由 Windows CI 完成）。
 - `xlsx` 依赖改为仓库内 vendor tarball（`tools/vendor/xlsx-0.20.3.tgz`），`npm ci` 不再依赖外部 CDN，离线和 CI 环境均可复现构建。
 - 市场元数据完善：补充 `capabilities.untrustedWorkspaces`、`extensionKind: ["ui"]`、51 条命令的 `onCommand` 激活事件、`keywords`、`qna` 与 `galleryBanner`；移除安装时强制捆绑第三方语言包与图标包的 `extensionPack`。
 - 数据安全修复：写入工作区编码设置改用 Configuration API，不再 JSONC 解析重写 `.vscode/settings.json`；数据库 SQLite 普通保存新增外部修改检测，磁盘内容被其他程序改写时拒绝覆盖；区服同步目标侧增加逐级 realpath 围栏，符号链接/目录联接无法把写入重定向到目标根之外。
@@ -13,6 +13,11 @@
 - Windows EXE 安装程序：安装逻辑沉淀为仓库脚本 `tools/release/installer/install-boo.ps1` 与 `tools/release/build-windows-installer.ps1`（`npm run package:exe` 本地可构建），自动探测本机 VS Code（PATH/用户级/系统级/Insiders），以 `--force` 安装 VSIX 后校验安装结果；未检测到 VS Code 时引导下载并打开手动安装目录；发布工作流改为调用同一脚本，CI 与本地同源。
 - 跨平台路径解析修复：Pak.txt 密码匹配、EffectImageList 存档引用、地图标识路径与 `#CALL`/`#CALLEX` 脚本引用中的 Windows 反斜杠路径，在 Linux/macOS 上此前按本机语义解析导致失配或拼错目录，现统一按 Windows 语义处理，与 Windows 行为一致。
 - 非 Windows 平台对 WIL/WZL 成对资源组点击"开启编辑"时，明确提示该操作仅支持 Windows，不再静默无响应。
+- UI 编辑器代码往返保真修复：文字标签解析支持负坐标、内容含冒号与一行多个文字标签（此前被静默丢弃）；倒计时读写坐标补偿对称，消除每轮"代码→画布→代码"累计 +4 偏移；按钮/图片/特效/进度条/输入框等坐标同样支持负值。
+- UI 编辑器零值保真：`fcolor=0`（黑色）、输入框边框/文字/占位颜色为 0 等合法零值不再被 `||` 默认值覆盖为白色/默认色；属性键大小写不敏感（`FCOLOR=` 与 `fcolor=` 等价）。
+- 数据库读取修复（WAL）：SQLite 数据库处于 WAL 日志模式时，其他程序（运行中的 M2、GM 工具）提交后仍留在 `<file>-wal` 中的数据此前会被静默忽略，目录浏览/翻页/道具库看到过期内容；现在按 SQLite 文件格式解析 WAL 头与帧（魔数/版本/盐值/累计校验和逐帧验证，未提交事务丢弃），把已提交帧合并进数据库镜像后再打开。合并结果经真实 SQLite `integrity_check` 交叉验证。
+- 数据库写入安全（WAL）：保存时先清理 `-wal`/`-shm` 侧车再换主库，避免旧 WAL 帧回放覆盖新库；侧车被外部进程占用时中止保存；外部修改检测的指纹同时覆盖主库与 `-wal`（外部经 WAL 提交的数据不再漏检）；备份/撤回一并保留并还原 WAL，数据库写入失败恢复与撤回到达与备份时刻完全一致的状态。
+- 地图预览写入安全：NPC/刷怪/地图标识的行级修改落盘前先校验行内容指纹（预览加载时记录，写入时与当前行比对），内容被外部程序改写或行号错位时拒绝写入并提示刷新，杜绝按行号改错记录；目标文件已在编辑器中打开时改走文档编辑通道应用修改（原文档干净时自动保存，存在未保存草稿时保留草稿并提示手动保存），不再直接覆盖磁盘文件绕过编辑器。
 
 ## V4.4.1 - 2026-10-24
 

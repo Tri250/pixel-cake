@@ -1,4 +1,3 @@
-import * as crypto from 'crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 import { EngineId } from '../types';
@@ -17,6 +16,7 @@ import {
 import { decodeTextFile, encodeTextFile } from './text';
 import { isBinarySpreadsheet, parseScriptTableData } from './table-data';
 import { openXlsTable } from './xls-table';
+import { readSqliteDatabaseImage, sqliteStateSha256 } from './sqlite-wal';
 
 type IniSections = Map<string, Map<string, string[]>>;
 
@@ -556,9 +556,9 @@ function fileSetStamp(files: readonly string[]): string {
       // can survive an in-place replacement, so include exact file bytes in the
       // identity instead of allowing a stale open database to draw another
       // item. Only the engine-selected item DB candidates are hashed here.
-      const contentSha256 = crypto.createHash('sha256')
-        .update(fs.readFileSync(filePath))
-        .digest('hex');
+      // 指纹同时覆盖 `<file>-wal` 侧车：外部程序通过 WAL 提交的新数据
+      // 必须让缓存失效，否则旧连接会继续画出错误的道具。
+      const contentSha256 = sqliteStateSha256(filePath);
       return [
         pathKey(filePath),
         stat.size,
@@ -575,7 +575,9 @@ function fileSetStamp(files: readonly string[]): string {
 }
 
 function openSqliteItemSources(SQL: SqlModule, filePath: string): DatabaseFieldSource[] {
-  const database = new SQL.Database(fs.readFileSync(filePath));
+  // WAL 合并读取：道具库处于 WAL 日志模式时，其他程序提交的数据可能
+  // 仍留在 `<file>-wal` 中，直接读主库会看到过期道具。
+  const database = new SQL.Database(readSqliteDatabaseImage(filePath).data);
   const tableRows = database.exec("SELECT name FROM sqlite_master WHERE type='table'")[0]?.values || [];
   const sources: DatabaseFieldSource[] = [];
   for (const row of tableRows) {

@@ -3,6 +3,7 @@ import * as path from 'path';
 import { EngineId } from '../types';
 import { MapInfoEntry } from './map-preview';
 import { parseTableColumns } from './table-configs';
+import { entityLineFingerprint } from './text';
 
 export interface MerchantNpc {
   lineNumber: number;
@@ -14,6 +15,8 @@ export interface MerchantNpc {
   displayName: string;
   direction: number;
   appearance: number;
+  /** 原始行内容指纹：落盘前校验行未被外部改动。 */
+  lineFingerprint: string;
 }
 
 export interface ParsedMerchantLine {
@@ -29,6 +32,8 @@ export interface MonsterSpawn {
   y: number;
   monsterName: string;
   range: number;
+  /** 原始行内容指纹：落盘前校验行未被外部改动。 */
+  lineFingerprint: string;
 }
 
 export interface ParsedMonGenLine {
@@ -197,6 +202,7 @@ export function parseMerchantLine(rawLine: string, lineNumber: number): ParsedMe
       displayName: fields[4],
       direction: Number(fields[5]) || 0,
       appearance,
+      lineFingerprint: entityLineFingerprint(rawLine),
     },
   };
 }
@@ -230,6 +236,7 @@ export function parseMonGenLine(rawLine: string, lineNumber: number): ParsedMonG
       y,
       monsterName: fields[3],
       range,
+      lineFingerprint: entityLineFingerprint(rawLine),
     },
   };
 }
@@ -318,6 +325,28 @@ export function mapEntityMatches(entryMapName: string, map: MapInfoEntry): boole
   return [map.mapId, map.originalMapId, map.name].some(value => normalizeMapKey(value) === key);
 }
 
+/**
+ * 行指纹校验：`lineFingerprint` 是预览加载时该行的内容哈希，与当前文本中
+ * 同一行号的原始内容比对，不一致即说明行被外部改动或编辑器草稿尚未保存，
+ * 按行号写入会改错记录。旧版前端消息可能不带指纹，此时跳过校验。
+ */
+export function assertEntityLineFingerprint(
+  text: string,
+  lineNumber: number,
+  lineFingerprint: string | undefined,
+  label: string
+): void {
+  if (!lineFingerprint) return;
+  const range = findLineRange(text, lineNumber);
+  const current = range ? text.slice(range.start, range.end) : '';
+  if (entityLineFingerprint(current) !== lineFingerprint) {
+    throw new Error(
+      `${label} 第 ${lineNumber} 行内容已在地图预览加载后被外部修改（文件被其他程序改写或编辑器存在未保存草稿），` +
+      '为避免改错记录，本次修改已取消；请刷新地图预览后重试'
+    );
+  }
+}
+
 export function updateMerchantCoordinates(
   text: string,
   lineNumber: number,
@@ -336,6 +365,7 @@ export function updateMerchantNpc(
   y: number,
   appearance: number,
   mapName?: string,
+  lineFingerprint?: string,
 ): { text: string; npc: MerchantNpc } {
   if (!Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) {
     throw new Error('NPC坐标必须是大于等于 0 的整数');
@@ -343,6 +373,7 @@ export function updateMerchantNpc(
   if (!Number.isSafeInteger(appearance) || appearance < 0) {
     throw new Error('NPC外观编号必须是大于等于 0 的整数');
   }
+  assertEntityLineFingerprint(text, lineNumber, lineFingerprint, 'Merchant.txt');
   const npc = parseMerchantText(text).find(item => item.lineNumber === lineNumber);
   if (!npc) throw new Error(`Merchant.txt 第 ${lineNumber} 行不是有效的 NPC 配置`);
   const normalizedMapName = mapName === undefined ? npc.mapName : String(mapName).trim();
@@ -371,8 +402,10 @@ function parseSafeZoneCoordinate(value: string): { x: number; y: number; pair: b
 export function updateMonGenFields(
   text: string,
   lineNumber: number,
-  fields: string[]
+  fields: string[],
+  lineFingerprint?: string
 ): { text: string; spawn: MonsterSpawn } {
+  assertEntityLineFingerprint(text, lineNumber, lineFingerprint, 'MonGen.txt');
   if (!parseMonGenText(text).some(item => item.lineNumber === lineNumber)) {
     throw new Error(`MonGen.txt 第 ${lineNumber} 行不是有效的刷怪配置`);
   }

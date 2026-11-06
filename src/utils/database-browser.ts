@@ -3,6 +3,12 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { Biff8DatabaseSession } from './biff8-database';
 import { AccessDatabaseSession, AccessMutationResult } from './access-database';
+import {
+  readSqliteDatabaseImage,
+  removeSqliteSidecarFiles,
+  restoreSqliteBackup,
+  sqliteStateSha256,
+} from './sqlite-wal';
 
 export type DatabaseKind = 'sqlite' | 'access' | 'biff8';
 export type DatabaseProfile = 'legacy' | '996pc';
@@ -204,7 +210,9 @@ export class DatabaseBrowserSession {
           const filePath = path.join(directory, fileName);
           let database: SqlDatabase | undefined;
           try {
-            database = new SQL.Database(fs.readFileSync(filePath));
+            // WAL 合并读取：游戏数据库处于 WAL 日志模式时，其他程序提交的
+            // 数据可能仍留在 `<file>-wal` 中，直接读主库会看到过期内容。
+            database = new SQL.Database(readSqliteDatabaseImage(filePath).data);
             const tableNames = readSqliteTableNames(database);
             for (const tableName of tableNames) {
               const sqliteSchema = readSqliteSchema(database, tableName);
@@ -522,7 +530,8 @@ export class DatabaseBrowserSession {
     if (!fs.existsSync(entry.mutation.backupPath)) throw new Error('撤回备份已不存在');
 
     this.releaseActive();
-    if (fileSha256(entry.filePath) !== entry.postMutationSha256) {
+    // 指纹覆盖主库与 `-wal` 侧车：外部程序通过 WAL 提交的新数据同样视为外部修改。
+    if (sqliteStateSha256(entry.filePath) !== entry.postMutationSha256) {
       throw new Error('数据库已被其他程序修改，为避免覆盖外部数据，本次撤回已取消');
     }
 
@@ -539,13 +548,8 @@ export class DatabaseBrowserSession {
     }
 
     const safetyBackupPath = createDatabaseBackup(entry.filePath);
-    const temporaryPath = path.join(
-      path.dirname(entry.filePath),
-      `.${path.basename(entry.filePath)}.boo-undo-${process.pid}-${Date.now()}.tmp`
-    );
     try {
-      fs.copyFileSync(entry.mutation.backupPath, temporaryPath);
-      fs.copyFileSync(temporaryPath, entry.filePath);
+      restoreSqliteBackup(entry.mutation.backupPath, entry.filePath);
       this.resetAfterExternalRestore();
       const catalog = await this.initialize();
       const table = catalog.tables.find(candidate => candidate.id === entry.mutation.tableId);
@@ -560,12 +564,10 @@ export class DatabaseBrowserSession {
         rowId: entry.mutation.rowId,
       };
     } catch (error) {
-      try { fs.copyFileSync(safetyBackupPath, entry.filePath); } catch { /* preserve undo error */ }
+      try { restoreSqliteBackup(safetyBackupPath, entry.filePath); } catch { /* preserve undo error */ }
       this.resetAfterExternalRestore();
       try { await this.initialize(); } catch { /* the original error is more useful */ }
       throw new Error(`数据库撤回失败，已尝试恢复撤回前备份: ${error instanceof Error ? error.message : String(error)}`);
-    } finally {
-      try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch { /* best effort */ }
     }
   }
 
@@ -775,8 +777,9 @@ export class DatabaseBrowserSession {
     const database = await this.getActiveSqlite(source.filePath);
     // 外部修改检测：内存库基于加载时的文件快照，落盘前必须确认磁盘内容未被
     // 其他程序（运行中的 M2、第二个编辑器）改写，否则旧快照会静默覆盖外部修改。
+    // 指纹同时覆盖主库与 `-wal` 侧车，外部经 WAL 提交的新数据同样会被察觉。
     if (this.activeSqlite?.database === database
-      && fileSha256(source.filePath) !== this.activeSqlite.loadedSha256) {
+      && sqliteStateSha256(source.filePath) !== this.activeSqlite.loadedSha256) {
       throw new Error('数据库文件已被外部修改，为避免覆盖其他程序的写入，本次保存已取消；请刷新数据库后重新修改');
     }
     const backupPath = createDatabaseBackup(source.filePath);
@@ -799,9 +802,14 @@ export class DatabaseBrowserSession {
     );
     try {
       fs.writeFileSync(temporaryPath, Buffer.from(exported));
+      // 先清理 `-wal`/`-shm` 侧车再换主库：新镜像已包含 WAL 中已提交数据，
+      // 若旧 WAL 残留，SQLite 下次打开会按旧帧回放覆盖新库内容。若侧车
+      // 被其他进程占用无法删除（Windows 文件锁），说明外部程序正在使用，
+      // 直接中止保存并恢复现场。
+      removeSqliteSidecarFiles(source.filePath);
       fs.copyFileSync(temporaryPath, source.filePath);
     } catch (error) {
-      try { fs.copyFileSync(backupPath, source.filePath); } catch { /* keep the original write error */ }
+      try { restoreSqliteBackup(backupPath, source.filePath); } catch { /* keep the original write error */ }
       throw new Error(`数据库写入失败，已尝试恢复备份: ${error instanceof Error ? error.message : String(error)}`);
     } finally {
       try { if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath); } catch { /* temporary cleanup is best effort */ }
@@ -814,7 +822,8 @@ export class DatabaseBrowserSession {
       this.undoStack.push({
         mutation: { ...result },
         filePath,
-        postMutationSha256: verifiedPostSha256 || fileSha256(filePath),
+        // 指纹同时覆盖主库与 `-wal` 侧车（无侧车时退化为普通文件哈希）。
+        postMutationSha256: verifiedPostSha256 || sqliteStateSha256(filePath),
         backupSha256: verifiedBackupSha256,
       });
       if (this.undoStack.length > 100) this.undoStack.shift();
@@ -842,12 +851,14 @@ export class DatabaseBrowserSession {
     if (this.activeSqlite?.filePath === filePath) return this.activeSqlite.database;
     this.releaseActive();
     const SQL = await getSqlModule();
-    const buffer = fs.readFileSync(filePath);
-    const database = new SQL.Database(buffer);
+    // 快照包含 WAL 已提交数据；指纹同时覆盖主库与 `-wal` 侧车，
+    // 任何一侧被外部程序改动都能在落盘前被发现。
+    const image = readSqliteDatabaseImage(filePath);
+    const database = new SQL.Database(image.data);
     this.activeSqlite = {
       filePath,
       database,
-      loadedSha256: crypto.createHash('sha256').update(buffer).digest('hex'),
+      loadedSha256: image.stateSha256,
     };
     return database;
   }
@@ -1123,11 +1134,10 @@ function createDatabaseBackup(filePath: string): string {
   const suffix = `${process.pid}-${process.hrtime.bigint().toString().slice(-6)}`;
   const backupPath = path.join(backupDirectory, `${path.basename(filePath)}.${stamp}.${suffix}.bak`);
   fs.copyFileSync(filePath, backupPath);
+  // WAL 模式数据库的已提交数据可能仍在 `<file>-wal` 中，备份必须一并保留，
+  // 恢复时才能还原到与备份时刻完全一致的状态（约定后缀 `-wal`）。
+  try { fs.copyFileSync(`${filePath}-wal`, `${backupPath}-wal`); } catch { /* no WAL sidecar */ }
   return backupPath;
-}
-
-function fileSha256(filePath: string): string {
-  return crypto.createHash('sha256').update(fs.readFileSync(filePath)).digest('hex');
 }
 
 function toPublicTableInfo(source: TableSource): DatabaseTableInfo {

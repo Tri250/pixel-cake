@@ -77,13 +77,15 @@ function main() {
   );
   const pad3 = editor.match(/function pad3\(n\)\{[^\r\n]+\}/)?.[0];
   assert.ok(pad3, 'pad3 must exist in editor.html');
+  const intOr = editor.match(/function intOr\([^)]*\)\{[^\r\n]+\}/)?.[0];
+  assert.ok(intOr, 'intOr helper must exist in editor.html');
   const generate = extractFunction(
     editor,
     'generateCodeSilent',
     '// 代码 → 画布同步'
   );
   const backgroundIdentity = extractFunction(editor, 'isPlainCanvasImage', '// 属性面板');
-  const functionSource = `${pad3}\n${backgroundIdentity}\n${generate}`;
+  const functionSource = `${pad3}\n${intOr}\n${backgroundIdentity}\n${generate}`;
   const gom = renderForEngine(functionSource, 'gom');
   const pc996 = renderForEngine(functionSource, '996pc');
   const gee = renderForEngine(functionSource, 'lingfeng');
