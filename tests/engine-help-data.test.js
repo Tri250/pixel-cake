@@ -246,7 +246,7 @@ function main() {
   }
 
   assert.equal(packageJson.contributes.snippets, undefined);
-  assert.equal(packageJson.version, '4.4.0');
+  assert.equal(packageJson.version, '4.4.1');
   assert.equal(accuracyReport.schemaVersion, 4);
   assert.equal(accuracyReport.method, 'strict-definition-and-final-visible-language');
   assert.deepEqual(accuracyReport.summary, {
