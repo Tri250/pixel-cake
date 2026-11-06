@@ -15,6 +15,16 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
+        include:
+          # Windows 是权威发布平台（原生构建 + 打包 + 发布）；
+          # Linux/macOS 作为兼容性验证，结果记录但不阻塞发布。
+          - os: ubuntu-latest
+            experimental: true
+          - os: macos-latest
+            experimental: true
+          - os: windows-latest
+            experimental: false
+    continue-on-error: ${{ matrix.experimental }}
     runs-on: ${{ matrix.os }}
 
     steps:
