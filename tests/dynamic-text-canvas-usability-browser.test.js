@@ -575,18 +575,22 @@ window.acquireVsCodeApi = function () { return { postMessage: function (message)
         labelRect.top + Math.max(1, Math.min(labelRect.height - 1, labelRect.height / 2))
       );
       var longTextGeometryFailures = [];
+      // macOS 的字体垂直度量（ascent/descent）与 Linux/Windows 相差约 1.2px，
+      // 行内文本盒会略高于/低于 wrapper 与 hit 区域；水平位置必须严格一致，
+      // 垂直方向允许 2px 的字体度量平台差异。
+      var containX = 0.5, containY = 2;
       if (!wrapperRect || !labelRect || !hitRect) longTextGeometryFailures.push('missing geometry');
       else {
-        if (wrapperRect.left - 0.5 > labelRect.left
-          || wrapperRect.top - 0.5 > labelRect.top
-          || wrapperRect.right + 0.5 < labelRect.right
-          || wrapperRect.bottom + 0.5 < labelRect.bottom) {
+        if (wrapperRect.left - containX > labelRect.left
+          || wrapperRect.top - containY > labelRect.top
+          || wrapperRect.right + containX < labelRect.right
+          || wrapperRect.bottom + containY < labelRect.bottom) {
           longTextGeometryFailures.push('wrapper does not contain label');
         }
-        if (hitRect.left - 0.5 > labelRect.left
-          || hitRect.top - 0.5 > labelRect.top
-          || hitRect.right + 0.5 < labelRect.right
-          || hitRect.bottom + 0.5 < labelRect.bottom) {
+        if (hitRect.left - containX > labelRect.left
+          || hitRect.top - containY > labelRect.top
+          || hitRect.right + containX < labelRect.right
+          || hitRect.bottom + containY < labelRect.bottom) {
           longTextGeometryFailures.push('action hitarea does not contain label');
         }
         if (canvasRect.left - 0.5 > labelRect.left

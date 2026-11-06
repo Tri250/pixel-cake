@@ -58,7 +58,7 @@ async function waitUntil(predicate, milliseconds) {
   return false;
 }
 
-async function runChromiumDom(browser, htmlPath, profilePath) {
+async function attemptChromiumDom(browser, htmlPath, profilePath) {
   // A stale DevToolsActivePort can silently connect a Chrome attempt to an old
   // Edge process. Never launch into, clean, or close a pre-existing profile.
   profilePath = path.resolve(profilePath);
@@ -149,5 +149,30 @@ async function runChromiumDom(browser, htmlPath, profilePath) {
   }
   if (primaryError) throw primaryError;
   return dom;
+}
+
+// Windows/macOS runner 的浏览器冷启动偶发抖动（杀毒扫描、端口/配置目录竞争、
+// 旧 Edge 进程残留等）。启动类失败换一个全新的 profile 目录整体重试；
+// 非启动类失败（真实的页面断言错误）不重试，避免掩盖回归。
+const RETRYABLE_STARTUP = /^(Chromium (startup failed|browser endpoint does not match|browser identity mismatch|page endpoint mismatch|cleanup did not complete|scenario and cleanup failed)|CDP (connection failed|connection timeout|timeout |closed )|DOM test did not complete)/;
+
+async function runChromiumDom(browser, htmlPath, profilePath) {
+  profilePath = path.resolve(profilePath);
+  let primary;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const profile = attempt === 0 ? profilePath : `${profilePath}-retry-${attempt}`;
+    try {
+      const dom = await attemptChromiumDom(browser, htmlPath, profile);
+      if (attempt > 0) fs.rmSync(profile, { recursive: true, force: true });
+      return dom;
+    } catch (error) {
+      if (attempt === 2 || !RETRYABLE_STARTUP.test(String(error?.message || ''))) throw error;
+      primary = error;
+      console.log(`Chromium attempt ${attempt + 1} failed (${error.message}); retrying with a fresh profile`);
+      fs.rmSync(profile, { recursive: true, force: true });
+      await delay(500);
+    }
+  }
+  throw primary;
 }
 module.exports = { runChromiumDom };
