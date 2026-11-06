@@ -87,51 +87,91 @@ try {
   ) -join "`r`n"
   Set-Content -LiteralPath (Join-Path $srcDir 'install-boo.cmd') -Value $bootstrap -Encoding ascii
 
-  # ---- 2. 生成 IExpress SED（向导风格分节；全部 ASCII）----
-  # 路径加引号：检出目录或临时目录含空格时 iexpress 仍能正确解析。
-  # 注意：IExpress 的 SED 解析器要求 CRLF 行尾；源码以 LF 检出时 here-string
-  # 直接写出会生成 LF-only 的 SED，iexpress 静默失败（退出码 1，无任何输出）。
+  # ---- 2. 生成 IExpress SED（向导原生 SEDVersion=3 格式；全部 ASCII）----
+  # 采用 iexpress 向导自身生成的指令格式（%占位符 + [Strings] 分节 +
+  # SourceFiles=SourceFiles 指向 + 完整 [Options] 字段）。精简的
+  # SEDVersion=1 直写格式在 CI 无头环境下会被解析器静默拒绝（退出码 1）。
+  # 注意：SED 解析器要求 CRLF 行尾；路径含空格时在 [Strings] 里加引号。
   $sedPath = Join-Path $stageRoot 'boo-setup.sed'
+  $sedValue = { param([string]$v) if ($v -match '\s') { '"' + $v + '"' } else { $v } }
   $sedLines = @(
     '[Version]',
     'Class=IEXPRESS',
-    'SEDVersion=1',
+    'SEDVersion=3',
     '',
     '[Options]',
     'PackagePurpose=InstallApp',
     'ShowInstallProgramWindow=0',
-    'HideInstallProgramWindow=1',
-    'AppLaunched=cmd /c install-boo.cmd',
+    'HideExtractAnimation=0',
+    'UseLongFileName=1',
+    'InsideCompressed=0',
+    'CAB_FixedSize=0',
+    'CAB_ResvCodeSigning=0',
+    'RebootMode=N',
+    'InstallPrompt=%InstallPrompt%',
+    'DisplayLicense=%DisplayLicense%',
+    'FinishMessage=%FinishMessage%',
+    'TargetName=%TargetName%',
+    'FriendlyName=%FriendlyName%',
+    'AppLaunched=%AppLaunched%',
+    'PostInstallCmd=%PostInstallCmd%',
+    'AdminQuietInstCmd=%AdminQuietInstCmd%',
+    'UserQuietInstCmd=%UserQuietInstCmd%',
+    'SourceFiles=SourceFiles',
+    '',
+    '[Strings]',
+    'InstallPrompt=',
+    'DisplayLicense=',
+    'FinishMessage=',
+    (& $sedValue ('TargetName=' + $OutPath)),
+    (& $sedValue ('FriendlyName=BOO Visual Editor Setup')),
+    (& $sedValue ('AppLaunched=cmd /c install-boo.cmd')),
     'PostInstallCmd=<None>',
-    'AdminQuietInstCmd=<None>',
-    'UserQuietInstCmd=<None>',
-    "TargetName=`"$OutPath`"",
-    'FriendlyName=BOO Visual Editor Setup',
-    "SourceFiles0=`"$srcDir\`"",
+    'AdminQuietInstCmd=',
+    'UserQuietInstCmd=',
+    "FILE0=`"$vsixName`"",
+    'FILE1="install-boo.cmd"',
+    'FILE2="install-boo.ps1"',
     '',
     '[SourceFiles]',
-    "SourceFiles0=`"$srcDir\`"",
+    (& $sedValue ('SourceFiles0=' + (Join-Path $srcDir ''))),
     '',
     '[SourceFiles0]',
-    "%FILE0%=$vsixName",
-    '%FILE1%=install-boo.cmd',
-    '%FILE2%=install-boo.ps1'
+    '%FILE0%=',
+    '%FILE1%=',
+    '%FILE2%='
   )
   [System.IO.File]::WriteAllText(
     $sedPath,
     (($sedLines -join "`r`n") + "`r`n"),
     [System.Text.Encoding]::ASCII)
 
-  $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\iexpress.exe' } else { $null }
+  # x86 iexpress（SysWOW64）：产物可在 x86/x64 Windows 通用运行，行为与向导一致；
+  # 64 位 iexpress 在部分系统上打包异常。缺失时回退 System32。
+  $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'SysWOW64\iexpress.exe' } else { $null }
+  if (-not $iexpress -or -not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {
+    $iexpress = if ($env:SystemRoot) { Join-Path $env:SystemRoot 'System32\iexpress.exe' } else { $null }
+  }
   if (-not $iexpress -or -not (Test-Path -LiteralPath $iexpress -PathType Leaf)) {
     throw "iexpress.exe not found (this script must run on Windows): $iexpress"
   }
 
-  # ---- 3. 同步执行 iexpress（/Q 静默模式失败无输出，退出码是唯一线索）----
+  # ---- 3. 同步执行 iexpress（/Q 静默模式；捕获 stdout/stderr 作为唯一线索）----
+  $iexpressStdout = Join-Path $stageRoot 'iexpress-stdout.log'
+  $iexpressStderr = Join-Path $stageRoot 'iexpress-stderr.log'
   $proc = Start-Process -FilePath $iexpress `
     -ArgumentList "/N /Q `"$sedPath`"" `
-    -WindowStyle Hidden -PassThru -Wait
-  Write-Host "iexpress exit code: $($proc.ExitCode)"
+    -WindowStyle Hidden -PassThru -Wait `
+    -RedirectStandardOutput $iexpressStdout -RedirectStandardError $iexpressStderr
+  Write-Host "iexpress ($iexpress) exit code: $($proc.ExitCode)"
+  if ((Test-Path -LiteralPath $iexpressStdout) -and ((Get-Item -LiteralPath $iexpressStdout).Length -gt 0)) {
+    Write-Host '--- iexpress stdout ---'
+    Get-Content -LiteralPath $iexpressStdout | Write-Host
+  }
+  if ((Test-Path -LiteralPath $iexpressStderr) -and ((Get-Item -LiteralPath $iexpressStderr).Length -gt 0)) {
+    Write-Host '--- iexpress stderr ---'
+    Get-Content -LiteralPath $iexpressStderr | Write-Host
+  }
 
   # ---- 4. 产物落点兜底：iexpress 可能把 EXE 写到其他路径 ----
   if (-not (Test-Path -LiteralPath $OutPath -PathType Leaf)) {

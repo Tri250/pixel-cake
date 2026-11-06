@@ -651,12 +651,12 @@ window.acquireVsCodeApi = function () { return { postMessage: function (message)
         labelRect.top + Math.max(2, Math.min(labelRect.height - 2, labelRect.height / 2))
       );
       if (!wrapperRect || !labelRect || !hitRect
-        || wrapperRect.right + 0.5 < labelRect.right
-        || wrapperRect.bottom + 0.5 < labelRect.bottom
-        || hitRect.right + 0.5 < labelRect.right
-        || hitRect.bottom + 0.5 < labelRect.bottom
-        || canvasRect.right + 0.5 < labelRect.right
-        || canvasRect.bottom + 0.5 < labelRect.bottom
+        || wrapperRect.right + containX < labelRect.right
+        || wrapperRect.bottom + containY < labelRect.bottom
+        || hitRect.right + containX < labelRect.right
+        || hitRect.bottom + containY < labelRect.bottom
+        || canvasRect.right + containX < labelRect.right
+        || canvasRect.bottom + containY < labelRect.bottom
         || !farTextHit || (farTextHit !== localWrapper && !localWrapper.contains(farTextHit))) {
         throw new Error('long local text is clipped or misses its action surface at 200% zoom');
       }
