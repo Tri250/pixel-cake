@@ -88,15 +88,15 @@ try {
   Set-Content -LiteralPath (Join-Path $srcDir 'install-boo.cmd') -Value $bootstrap -Encoding ascii
 
   # ---- 2. 生成 IExpress SED（向导原生 SEDVersion=3 格式；全部 ASCII）----
-  # 采用 iexpress 向导自身生成的指令格式（%占位符 + [Strings] 分节 +
-  # SourceFiles=SourceFiles 指向 + 完整 [Options] 字段）。精简的
-  # SEDVersion=1 直写格式在 CI 无头环境下会被解析器静默拒绝（退出码 1）。
-  # 注意：SED 解析器要求 CRLF 行尾；路径含空格时在 [Strings] 里加引号。
+  # 关键：IExpress 的 SED 解析器不剥离引号——TargetName/SourceFiles0 等值
+  # 一旦带引号会被当作路径字面量的一部分，打包立即静默失败（退出码 1）。
+  # 参考真实可用产物（mintty/wsltty makewinx.cfg）：全部值不加引号，
+  # [SourceFiles0] 直接列出字面文件名（空值）。路径含空格的场景不受支持。
+  # 注意：SED 解析器要求 CRLF 行尾。
   $sedPath = Join-Path $stageRoot 'boo-setup.sed'
-  $sedValue = { param([string]$v) if ($v -match '\s') { '"' + $v + '"' } else { $v } }
   $sedLines = @(
     '[Version]',
-    'Class=IEXPRESS',
+    'Class=IExpress',
     'SEDVersion=3',
     '',
     '[Options]',
@@ -123,23 +123,20 @@ try {
     'InstallPrompt=',
     'DisplayLicense=',
     'FinishMessage=',
-    (& $sedValue ('TargetName=' + $OutPath)),
-    (& $sedValue ('FriendlyName=BOO Visual Editor Setup')),
-    (& $sedValue ('AppLaunched=cmd /c install-boo.cmd')),
+    ('TargetName=' + $OutPath),
+    'FriendlyName=BOO Visual Editor Setup',
+    'AppLaunched=cmd.exe /c install-boo.cmd',
     'PostInstallCmd=<None>',
     'AdminQuietInstCmd=',
     'UserQuietInstCmd=',
-    "FILE0=`"$vsixName`"",
-    'FILE1="install-boo.cmd"',
-    'FILE2="install-boo.ps1"',
     '',
     '[SourceFiles]',
-    (& $sedValue ('SourceFiles0=' + (Join-Path $srcDir ''))),
+    ('SourceFiles0=' + (Join-Path $srcDir '')),
     '',
     '[SourceFiles0]',
-    '%FILE0%=',
-    '%FILE1%=',
-    '%FILE2%='
+    ($vsixName + '='),
+    'install-boo.cmd=',
+    'install-boo.ps1='
   )
   [System.IO.File]::WriteAllText(
     $sedPath,

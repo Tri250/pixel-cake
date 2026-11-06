@@ -650,15 +650,20 @@ window.acquireVsCodeApi = function () { return { postMessage: function (message)
         Math.max(labelRect.left + 2, labelRect.right - 3),
         labelRect.top + Math.max(2, Math.min(labelRect.height - 2, labelRect.height / 2))
       );
+      // 200% 缩放下 wrapper/label 尺寸随 zoom 翻倍，macOS 字体垂直度量差
+      // （100% 时约 1.2px）也按 zoom 缩放，垂直容差同步翻倍。
+      var zoomContainY = containY * 2;
       if (!wrapperRect || !labelRect || !hitRect
         || wrapperRect.right + containX < labelRect.right
-        || wrapperRect.bottom + containY < labelRect.bottom
+        || wrapperRect.bottom + zoomContainY < labelRect.bottom
         || hitRect.right + containX < labelRect.right
-        || hitRect.bottom + containY < labelRect.bottom
+        || hitRect.bottom + zoomContainY < labelRect.bottom
         || canvasRect.right + containX < labelRect.right
-        || canvasRect.bottom + containY < labelRect.bottom
+        || canvasRect.bottom + zoomContainY < labelRect.bottom
         || !farTextHit || (farTextHit !== localWrapper && !localWrapper.contains(farTextHit))) {
-        throw new Error('long local text is clipped or misses its action surface at 200% zoom');
+        throw new Error('long local text is clipped or misses its action surface at 200% zoom: '
+          + 'wrapper=' + JSON.stringify(wrapperRect) + ' label=' + JSON.stringify(labelRect)
+          + ' hit=' + JSON.stringify(hitRect) + ' canvas=' + JSON.stringify(canvasRect));
       }
       document.getElementById('zoomReset').click();
       await wait(20);
